@@ -37,28 +37,31 @@ window.__ModuleLoader__.load({
     const CONFIG_PATH = '/project-memory/config'
 
     /**
-     * Human labels for the routing strategies.
-     *
-     * The keys are the values the Host validator accepts. The descriptions say what
-     * changes, not what the strategy is called: "compliance" is a name, "keeps rules
-     * that govern the files you are editing" is the thing the user is choosing.
+     * The routing tiers and strategies are driven by `data.choices`, which the Host fills
+     * from the same validator that rejects a bad save. Only their display text lives here,
+     * keyed by value, so a new tier needs one dictionary entry and no change on this side.
      */
-    const STRATEGY_TEXT = {
-      task: { title: 'task', desc: 'Prioritise what this step is about to do: the files in play and the decisions already made about them.' },
-      compliance: { title: 'compliance', desc: 'Prioritise the rules and corrections that govern the files in play, even when their wording looks unrelated.' },
-      orient: { title: 'orient', desc: 'Prioritise how the subsystem works and why, for requests that ask to understand rather than to act.' }
-    }
-
-    /** What each routing tier costs, stated in model calls rather than adjectives. */
-    const TIER_TEXT = {
-      off: { title: 'off', desc: 'Deterministic scoring only. No model call, ever.' },
-      smart: { title: 'smart', desc: 'Asks the router model only when deterministic scoring comes back empty or weak.' },
-      always: { title: 'always', desc: 'Asks the router model on every step. Needs a provider and a model below.' }
-    }
 
     // ---------------------------------------------------------------- dictionary
 
     const zh = {
+      'tier.always': 'always',
+      'tier.smart': 'smart',
+      'tier.off': 'off',
+      'tier.always.desc': '每一步都问一次副模型。需要下面填好提供方和模型。',
+      'tier.smart.desc': '只在确定性打分没结果或很弱时才问副模型。',
+      'tier.off.desc': '只做确定性打分，永远不调用模型。',
+      'strategy.task': 'task',
+      'strategy.compliance': 'compliance',
+      'strategy.orient': 'orient',
+      'strategy.task.desc': '优先「这一步要做什么」：涉及的文件，以及关于这些文件已经做过的决定。',
+      'strategy.compliance.desc': '优先管着这些文件的规则与更正，即使字面看起来无关。',
+      'strategy.orient.desc': '优先「这个子系统怎么运作、为什么」，适合想弄懂而不是想动手的请求。',
+      'scope.hint.global': '改动写进 profile，对所有项目生效。',
+      'scope.hint.project': '改动只写进这个项目的 .dsh-memory，别的项目不受影响。',
+      'router.status.ready': '副模型已配置：{provider} / {model}。',
+      'router.status.unconfigured': '未配置副模型，当前只做确定性选择。',
+      'router.status.noservice': '宿主没装 subagent provider，即使填了模型也不会调用。',
       'panel.title': '项目记忆',
       'panel.open': '打开项目记忆',
       'panel.loading': '正在读取…',
@@ -91,11 +94,9 @@ window.__ModuleLoader__.load({
       'router.saved': '已保存',
       'router.failed': '保存失败',
       'router.readonly': '这个 profile 不支持保存设置。',
-      'router.notConfigured': '未配置副模型，当前只做确定性选择。',
       'recall.title': '召回预算',
       'recall.line': '每次最多 {budget} tokens、{limit} 条',
       'project.title': '项目',
-      'project.select': '查看哪个项目',
       'project.current': '当前会话',
       'project.unknown': '这个路径不是已登记的项目，无法显示。回到列表里选一个。',
       'project.none': '还没有登记任何项目。在某个项目里开始一次会话后，它就会出现在这里。',
@@ -115,6 +116,23 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
+      'tier.always': 'always',
+      'tier.smart': 'smart',
+      'tier.off': 'off',
+      'tier.always.desc': 'Asks the router model on every step. Needs a provider and a model below.',
+      'tier.smart.desc': 'Asks the router model only when deterministic scoring comes back empty or weak.',
+      'tier.off.desc': 'Deterministic scoring only. No model call, ever.',
+      'strategy.task': 'task',
+      'strategy.compliance': 'compliance',
+      'strategy.orient': 'orient',
+      'strategy.task.desc': 'Prioritise what this step is about to do: the files in play and the decisions already made about them.',
+      'strategy.compliance.desc': 'Prioritise the rules and corrections that govern the files in play, even when their wording looks unrelated.',
+      'strategy.orient.desc': 'Prioritise how the subsystem works and why, for requests that ask to understand rather than to act.',
+      'scope.hint.global': 'Writes to the profile, so every project sees the change.',
+      'scope.hint.project': 'Writes only to this project\'s .dsh-memory; other projects are unaffected.',
+      'router.status.ready': 'Router model configured: {provider} / {model}.',
+      'router.status.unconfigured': 'No router model configured, so only deterministic selection runs.',
+      'router.status.noservice': 'The host has no subagent provider mounted, so a model would not be called even if set.',
       'panel.title': 'Project memory',
       'panel.open': 'Open project memory',
       'panel.loading': 'Reading…',
@@ -147,11 +165,9 @@ window.__ModuleLoader__.load({
       'router.saved': 'Saved',
       'router.failed': 'Save failed',
       'router.readonly': 'This profile cannot persist settings.',
-      'router.notConfigured': 'No router model configured, so only deterministic selection runs.',
       'recall.title': 'Recall budget',
       'recall.line': 'At most {budget} tokens and {limit} atoms per step',
       'project.title': 'Project',
-      'project.select': 'Which project to show',
       'project.current': 'current session',
       'project.unknown': 'That path is not a registered project, so there is nothing to show. Pick one from the list.',
       'project.none': 'No project registered yet. Start a session inside one and it appears here.',
@@ -223,11 +239,21 @@ window.__ModuleLoader__.load({
 .pm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .pm-chip { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--dsh-surface, rgba(127,127,127,0.12)); font-variant-numeric: tabular-nums; }
 .pm-chip.lead { background: var(--dsh-accent, rgba(90,140,255,0.18)); }
-.pm-choice { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+.pm-group { display: flex; flex-direction: column; gap: 2px; }
+/* One radio option. A head row holds the mark, the value and the description on a single
+   line so three tiers cost three lines instead of three stacked cards. */
+.pm-choice { display: flex; align-items: baseline; gap: 7px; padding: 4px 6px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
 .pm-choice:hover { background: var(--dsh-surface, rgba(127,127,127,0.09)); }
 .pm-choice.on { border-color: var(--dsh-accent, rgba(90,140,255,0.55)); background: var(--dsh-surface, rgba(127,127,127,0.09)); }
-.pm-choice-title { font-size: 12.5px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.pm-choice-desc { font-size: 11.5px; opacity: 0.66; line-height: 1.45; }
+.pm-choice-head { display: flex; align-items: baseline; gap: 7px; min-width: 0; flex: 1 1 auto; }
+.pm-radio { font-size: 10px; line-height: 1; opacity: 0.45; flex: 0 0 auto; }
+.pm-radio.on { opacity: 1; color: var(--dsh-accent, rgba(90,140,255,0.9)); }
+.pm-choice-title { font-size: 12px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
+.pm-choice-desc { font-size: 11.5px; opacity: 0.62; line-height: 1.45; min-width: 0; flex: 1 1 auto; }
+/* The router's runnability line: green when a model would be called, amber when not. */
+.pm-ok, .pm-warn { font-size: 11.5px; line-height: 1.5; padding: 6px 9px; border-radius: 6px; }
+.pm-ok { background: var(--dsh-surface, rgba(127,127,127,0.1)); opacity: 0.85; }
+.pm-warn { background: rgba(200,150,40,0.14); border: 1px solid rgba(200,150,40,0.35); }
 .pm-input { width: 100%; font-size: 12.5px; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--dsh-border, rgba(127,127,127,0.3)); background: transparent; color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .pm-btn { align-self: flex-start; font-size: 12.5px; padding: 6px 14px; border-radius: 7px; border: 1px solid var(--dsh-border, rgba(127,127,127,0.32)); background: var(--dsh-surface, rgba(127,127,127,0.1)); color: inherit; cursor: pointer; }
 .pm-btn:disabled { opacity: 0.45; cursor: default; }
@@ -242,6 +268,8 @@ window.__ModuleLoader__.load({
 .pm-scope-item:hover { background: var(--dsh-surface, rgba(127,127,127,0.09)); }
 .pm-scope-item.on { border-color: var(--dsh-accent, rgba(90,140,255,0.55)); background: var(--dsh-surface, rgba(127,127,127,0.09)); }
 .pm-scope-item.dim { opacity: 0.45; cursor: default; }
+.pm-scope-title { font-size: 12.5px; font-weight: 600; }
+.pm-scope-desc { font-size: 11.5px; opacity: 0.62; line-height: 1.45; }
 .pm-projects { display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow-y: auto; }
 .pm-project { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
 .pm-project:hover { background: var(--dsh-surface, rgba(127,127,127,0.09)); }
@@ -465,7 +493,6 @@ window.__ModuleLoader__.load({
             t('panel.retry')
           )
         ),
-        h('div', { className: 'pm-hint' }, t('project.select')),
         projects.length === 0
           ? h('div', { className: 'pm-muted' }, t('project.none'))
           : h(
@@ -488,9 +515,13 @@ window.__ModuleLoader__.load({
                 })
               )
             ),
+        // The root path is already printed inside the row above. Repeating it here said
+        // nothing new and pushed everything below it down by a line, which in a 380px
+        // sidebar is the difference between seeing the scope switch and scrolling to it.
+        // It is kept only for the one case the row cannot cover: no project at all.
         data.root === null || data.root === undefined
           ? h('div', { className: 'pm-banner' }, t('project.unknown'))
-          : h('div', { className: 'pm-hint' }, String(data.root))
+          : null
       )
 
       const atomSection =
@@ -583,47 +614,66 @@ window.__ModuleLoader__.load({
               )
       )
 
-      const tierChoices = data.choices.routerTier.map((tier) => {
-        const desc = TIER_TEXT[tier]
-        const on = choice !== null && choice.routerTier === tier
-        return h(
+      // One radio option. The mark, the label and the description share a baseline row so
+      // three tiers cost three lines instead of three stacked cards. The label goes
+      // through the dictionary (not the raw value) so a translator can rename `always`
+      // without touching code, and so a missing key shows up as a gap rather than as an
+      // English word inside a Chinese panel.
+      const choiceRow = (label, value, on, desc, onSelect) =>
+        h(
           'div',
           {
-            key: tier,
+            key: value,
             className: on ? 'pm-choice on' : 'pm-choice',
-            role: 'button',
+            role: 'radio',
+            'aria-checked': on,
             tabIndex: 0,
-            onClick: () => setChoice((current) => ({ ...(current ?? {}), routerTier: tier })),
+            onClick: onSelect,
             onKeyDown: (event) => {
-              if (event.key === 'Enter' || event.key === ' ') setChoice((current) => ({ ...(current ?? {}), routerTier: tier }))
+              if (event.key === 'Enter' || event.key === ' ') onSelect()
             }
           },
-          h('div', { className: 'pm-choice-title' }, desc ? desc.title : tier),
-          desc ? h('div', { className: 'pm-choice-desc' }, desc.desc) : null
+          h(
+            'div',
+            { className: 'pm-choice-head' },
+            h('div', { className: on ? 'pm-radio on' : 'pm-radio' }, on ? '●' : '○'),
+            h('div', { className: 'pm-choice-title' }, h('code', null, label)),
+            desc === '' ? null : h('div', { className: 'pm-choice-desc' }, desc)
+          )
         )
-      })
 
-      const strategyChoices = data.choices.routerStrategy.map((strategy) => {
-        const desc = STRATEGY_TEXT[strategy]
-        const on = choice !== null && choice.routerStrategy === strategy
-        return h(
-          'div',
-          {
-            key: strategy,
-            className: on ? 'pm-choice on' : 'pm-choice',
-            role: 'button',
-            tabIndex: 0,
-            onClick: () => setChoice((current) => ({ ...(current ?? {}), routerStrategy: strategy })),
-            onKeyDown: (event) => {
-              if (event.key === 'Enter' || event.key === ' ') setChoice((current) => ({ ...(current ?? {}), routerStrategy: strategy }))
-            }
-          },
-          h('div', { className: 'pm-choice-title' }, desc ? desc.title : strategy),
-          desc ? h('div', { className: 'pm-choice-desc' }, desc.desc) : null
+      const tierChoices = data.choices.routerTier.map((tier) =>
+        choiceRow(
+          t(`tier.${tier}`),
+          tier,
+          choice !== null && choice.routerTier === tier,
+          t(`tier.${tier}.desc`),
+          () => setChoice((current) => ({ ...(current ?? {}), routerTier: tier }))
         )
-      })
+      )
 
+      const strategyChoices = data.choices.routerStrategy.map((strategy) =>
+        choiceRow(
+          t(`strategy.${strategy}`),
+          strategy,
+          choice !== null && choice.routerStrategy === strategy,
+          t(`strategy.${strategy}.desc`),
+          () => setChoice((current) => ({ ...(current ?? {}), routerStrategy: strategy }))
+        )
+      )
+
+      // Whether the router can actually run, stated as one sentence. Before this, the
+      // panel said only "no router model configured", which is true but incomplete: the
+      // host can also be missing a subagent provider, in which case filling in the model
+      // changes nothing. Both causes look identical from the fields, so both are named.
+      const hasProviderService = data.router !== undefined && data.router.serviceAvailable === true
       const configured = String(settings.routerProvider) !== '' && String(settings.routerModel) !== ''
+      const routerStatus =
+        configured === true && hasProviderService === true
+          ? fill(t('router.status.ready'), { provider: String(settings.routerProvider), model: String(settings.routerModel) })
+          : hasProviderService !== true
+            ? t('router.status.noservice')
+            : t('router.status.unconfigured')
 
       // Which of the four router keys this project currently owns. Shown next to the field
       // so a user can tell "this is what I set here" from "this is what I inherited",
@@ -656,8 +706,8 @@ window.__ModuleLoader__.load({
               }
             }
           },
-          h('div', { className: 'pm-choice-title' }, label),
-          h('div', { className: 'pm-choice-desc' }, hint)
+          h('div', { className: 'pm-scope-title' }, label),
+          h('div', { className: 'pm-scope-desc' }, hint)
         )
       }
 
@@ -717,11 +767,11 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pm-hint' },
-          activeScope === 'project' ? t('scope.project.hint') : t('scope.global.hint')
+          activeScope === 'project' ? t('scope.hint.project') : t('scope.hint.global')
         ),
         h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          { className: 'pm-group' },
           h(
             'div',
             { className: 'pm-row' },
@@ -732,7 +782,7 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          { className: 'pm-group' },
           h(
             'div',
             { className: 'pm-row' },
@@ -783,9 +833,17 @@ window.__ModuleLoader__.load({
             : null
         ),
         h('div', { className: 'pm-hint' }, t('router.provider.hint')),
-        configured
-          ? null
-          : h('div', { className: 'pm-banner' }, t('router.notConfigured')),
+        // One line saying whether a model would actually be called, and if not, which of
+        // the two independent causes is missing. `configured` alone was wrong twice: it
+        // stayed silent when the host had no provider mounted, and it said "not
+        // configured" in a full-width banner when a half-line of text carried the same
+        // information. The tier descriptions point at the fields, so the answer to "did
+        // that work" belongs right beside them.
+        h(
+          'div',
+          { className: configured === true && hasProviderService === true ? 'pm-ok' : 'pm-warn' },
+          routerStatus
+        ),
         h(
           'button',
           { className: 'pm-btn', disabled: saving !== null, onClick: () => void save() },

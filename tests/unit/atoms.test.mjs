@@ -34,6 +34,7 @@ const compactions = await load(CORE, 'compactions.js')
 const router = await load(LIB, 'router.js')
 const recall = await load(LIB, 'recall.js')
 const observer = await load(LIB, 'compaction-memory.js')
+const delegate = await load(LIB, 'delegate.js')
 
 const settings = config.normalizeConfig({})
 const root = mkdtempSync(path.join(tmpdir(), 'pm-atoms-'))
@@ -272,6 +273,51 @@ try {
       'deterministic',
       'the cooldown prevents a second call in the same turn',
     )
+  }
+
+  // ------------------------------------------ readiness: a provider must be mounted
+  {
+    // This is the defect that made the router silently never run on a real profile. The
+    // subagents service is mounted on its own there, with no provider, so it accepts
+    // `startActivation` and fails every call. Readiness used to stop at "the service
+    // exists", which reported `ok` and then degraded every single step at runtime with a
+    // reason that blamed a service that was in fact present.
+    const working = { list: () => ['spawn', 'fork'], startActivation: async () => {} }
+    const bare = { list: () => [], startActivation: async () => {} }
+    const unknown = { startActivation: async () => {} }
+    const ctxWith = (service) => ({ get: (name) => (name === 'subagents' ? service : undefined) })
+    const ready = (ctx, provider = 'spawn') =>
+      delegate.routerReadiness({ ctx, tier: 'always', provider, model: 'deepseek-chat' })
+
+    assert.equal(ready(ctxWith(working)).ok, true, 'a mounted provider with the service is ready')
+
+    const noProvider = ready(ctxWith(bare))
+    assert.equal(noProvider.ok, false, 'the service alone is not enough to delegate')
+    assert.match(noProvider.reason, /no subagent provider is mounted/, 'the reason names the missing provider mount')
+
+    const wrongProvider = ready(ctxWith({ list: () => ['fork'], startActivation: async () => {} }))
+    assert.equal(wrongProvider.ok, false, 'a provider that is not the configured one is not ready')
+    assert.match(wrongProvider.reason, /"spawn" is not mounted/, 'the reason names the provider asked for')
+    assert.match(wrongProvider.reason, /available: fork/, 'the reason names what is available instead')
+
+    // An unrecognised registry shape must not be read as "nothing mounted": that would
+    // disable a router that works, which is worse than not checking at all.
+    assert.equal(delegate.listProviders(unknown), null, 'an unknown shape reports "cannot tell", not "empty"')
+    assert.equal(ready(ctxWith(unknown)).ok, true, 'an unreadable registry is assumed usable')
+
+    // The registry is a Map on the real service; probing must not treat it as a list.
+    assert.deepEqual(
+      delegate.listProviders({ providers: new Map([['Spawn', {}]]) }),
+      ['spawn'],
+      'a Map registry is read case-insensitively',
+    )
+    assert.equal(delegate.listProviders({ list: () => { throw new Error('boom') } }), null, 'a throwing probe tells nothing')
+
+    // `delegationAvailable` is what the panel shows. It must agree with readiness minus
+    // the settings that are the user's to fill in.
+    assert.equal(delegate.delegationAvailable(ctxWith(working)), true, 'a working host is reported as available')
+    assert.equal(delegate.delegationAvailable(ctxWith(bare)), false, 'a provider-less host is reported as unavailable')
+    assert.equal(delegate.delegationAvailable({ get: () => undefined }), false, 'no service is unavailable')
   }
 
   // ------------------------------------------------------------------ extract

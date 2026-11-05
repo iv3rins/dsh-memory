@@ -125,6 +125,23 @@ assert.deepEqual(exported.inject.slice().sort(), ['locale', 'slots'], 'it inject
   const used = new Set()
   // `t('key')` plus the `fill(t('key'), {...})` form, which is the same call.
   for (const match of source.matchAll(/\bt\(\s*'([a-zA-Z][\w.]*)'\s*\)/g)) used.add(match[1])
+  // Tier and strategy labels are built as `t(\`tier.${tier}\`)` from the value lists the
+  // Host validates against, so they cannot be spelled as literals here without duplicating
+  // that list. Enumerate them from `core/config.js` instead: a key the panel can ask for is
+  // still a key the dictionary must define, and a regression in either list fails here.
+  const config = await import(pathToFileURL(path.join(root, 'core', 'config.js')).href)
+  for (const tier of config.ROUTER_TIERS) {
+    used.add(`tier.${tier}`)
+    used.add(`tier.${tier}.desc`)
+  }
+  for (const strategy of config.ROUTER_STRATEGIES) {
+    used.add(`strategy.${strategy}`)
+    used.add(`strategy.${strategy}.desc`)
+  }
+  // The panel also reads these two through a template, and this is the list that proves
+  // the enumeration above stayed wired to the render path rather than to a stale copy.
+  assert.match(source, /t\(`tier\.\$\{tier\}`\)/, 'tier labels are read from the dictionary, not from the raw value')
+  assert.match(source, /t\(`strategy\.\$\{strategy\}`\)/, 'strategy labels are read from the dictionary')
   assert.ok(used.size >= 20, `the panel asks for a substantial number of strings (found ${used.size})`)
 
   const dictionaries = source
@@ -181,14 +198,43 @@ assert.deepEqual(exported.inject.slice().sort(), ['locale', 'slots'], 'it inject
   assert.equal(hostPanel.STATUS_PATH.startsWith('/project-memory/'), true, 'the route is namespaced to this plugin')
 }
 
-// --- 6. The panel offers exactly the values the Host validator accepts. ---
+// --- 6. Every value the Host validator accepts has words in both dictionaries. ---
 {
   const config = await import('../core/config.js')
+  // The words live in the dictionaries rather than in a table beside the render code,
+  // so the check is "a sentence exists for this value in every language", not "the
+  // source mentions this identifier". A table was how the panel ended up rendering
+  // English descriptions inside a Chinese sidebar: the values were localised nowhere.
+  const dictionaries = (() => {
+    let captured = null
+    exported.apply({
+      effect: (fn) => {
+        fn()
+        return () => {}
+      },
+      locale: {
+        register: (_ns, dicts) => {
+          captured = dicts
+          return () => {}
+        },
+        bind: () => (key) => key,
+      },
+      slots: { inject: (key, callback) => callback(), register: () => () => {} },
+    })
+    return captured
+  })()
+
   for (const tier of config.ROUTER_TIERS) {
-    assert.equal(source.includes(`${tier}:`), true, `the panel describes the "${tier}" tier`)
+    for (const language of ['zh', 'en']) {
+      assert.equal(typeof dictionaries[language][`tier.${tier}`], 'string', `${language} names the "${tier}" tier`)
+      assert.equal(typeof dictionaries[language][`tier.${tier}.desc`], 'string', `${language} explains the "${tier}" tier`)
+    }
   }
   for (const strategy of config.ROUTER_STRATEGIES) {
-    assert.equal(source.includes(`${strategy}:`), true, `the panel describes the "${strategy}" strategy`)
+    for (const language of ['zh', 'en']) {
+      assert.equal(typeof dictionaries[language][`strategy.${strategy}`], 'string', `${language} names the "${strategy}" strategy`)
+      assert.equal(typeof dictionaries[language][`strategy.${strategy}.desc`], 'string', `${language} explains the "${strategy}" strategy`)
+    }
   }
 }
 
