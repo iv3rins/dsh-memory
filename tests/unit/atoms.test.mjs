@@ -748,6 +748,47 @@ try {
         rmSync(ledgerRoot, { recursive: true, force: true })
       }
     }
+
+    // -------------------------------------------- ledger: dropped write visibility
+    //
+    // When the write queue is saturated the observer drops the write. That must leave
+    // a row saying so: a dropped write is a lost compaction, and losing it silently is
+    // the exact failure the ledger exists to prevent.
+    {
+      const overloadRoot = mkdtempSync(path.join(tmpdir(), 'pm-overload-'))
+      try {
+        mkdirSync(path.join(overloadRoot, '.dsh-memory', 'memory'), { recursive: true })
+        mkdirSync(path.join(overloadRoot, '.dsh-memory', 'state'), { recursive: true })
+        const quiet = { info: () => {}, warn: () => {} }
+        const led = observer.createCompactionObserver({ logger: quiet, settings, resolveRoot: () => overloadRoot })
+        const sess = { id: 'session-overload', header: { cwd: overloadRoot } }
+
+        // Fire more compactions than the queue accepts, without awaiting between them
+        // so the in-flight window actually fills.
+        const many = observer.MAX_PENDING_WRITES + 3
+        for (let i = 0; i < many; i++) {
+          led.observe(sess, {
+            type: 'compaction/summary',
+            seq: i,
+            data: {
+              compactionId: `OV-${i}`,
+              summary: [{ type: 'text', text: `## Critical Context\n- Must never push tag ${i} without review.\n` }],
+            },
+          })
+        }
+        await led.drain()
+
+        const read = compactions.readLedger(overloadRoot)
+        const dropped = read.entries.filter((e) => e.skipReason === compactions.SKIP_REASONS.OVERLOADED)
+        assert.ok(dropped.length > 0, `a dropped write is recorded, not lost (ledger has ${read.entries.length} rows for ${many} compactions)`)
+        assert.ok(
+          read.entries.every((e) => typeof e.compactionId === 'string' && e.compactionId.startsWith('OV-')),
+          'every row is attributable to a specific compaction',
+        )
+      } finally {
+        rmSync(overloadRoot, { recursive: true, force: true })
+      }
+    }
   }
 
   // ------------------------------------------------------------------- config

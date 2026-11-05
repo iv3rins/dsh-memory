@@ -42,16 +42,17 @@ export const MAX_LEDGER_LINES = 500
 /**
  * Reasons a compaction can end without adding atoms. Kept as a closed set so an
  * audit can group them instead of string-matching prose.
+ *
+ * Note what is deliberately absent: there is no reason for "no project root", because
+ * a compaction with nowhere to write cannot be recorded either. There is no reason for
+ * "replayed", because a replay replaces the existing row for that id rather than
+ * producing a second outcome. A closed set is only useful if every member is reachable.
  */
 export const SKIP_REASONS = Object.freeze({
   /** `extractOnCompaction` is off; the user asked for no extraction. */
   DISABLED: 'extraction-disabled',
   /** The summary was empty or whitespace-only after rendering. */
   EMPTY_SUMMARY: 'empty-summary',
-  /** No project root, so there is nowhere to write. */
-  NO_ROOT: 'no-project-root',
-  /** This process already handled the id and the store already has the atoms. */
-  REPLAY: 'already-handled',
   /** The extractor ran and found nothing durable worth keeping. */
   NO_STATEMENTS: 'no-extractable-statements',
   /** Atoms were extracted but every one was already known, so nothing changed. */
