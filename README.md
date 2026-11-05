@@ -7,10 +7,10 @@ Project-level persistent knowledge and development-state memory for [DeepSeek Ha
 
 An agent forgets everything when a session ends, when the context is compacted, or when you switch branches. For a project that outlives dozens of sessions, that means re-deriving the same decisions, re-reading the same documents, and repeating the same mistakes. This plugin gives a project a memory that lives in the repository instead of in a context window.
 
-It is a **host-only [cordis](https://github.com/deepseek-ai/cordis) plugin**: it registers agent tools, a system-prompt section, and slash commands. There is no browser half and no change to DSH itself.
+It is a **host-only [cordis](https://github.com/deepseek-ai/cordis) plugin**: it registers agent tools, a system-prompt section, and slash commands. It also ships one small **Client half** — a sidebar panel, which reads the host over two loopback routes and adds nothing to the host's work. No change to DSH itself.
 
 ```
-MIT licensed · Node 20+ · host-only, no client half
+MIT licensed · Node 20+ · host-only plugin + one sidebar panel
 ```
 
 ---
@@ -26,7 +26,6 @@ MIT licensed · Node 20+ · host-only, no client half
 - [Configuration](#configuration)
 - [Known limitations](#known-limitations)
 - [License](#license)
-
 ---
 
 ## Three systems, on purpose
@@ -47,7 +46,18 @@ A subagent can serve as the router when lexical scoring is not enough. Three tie
 | `smart` (default) | Deterministic gating, escalating to the router only when it selected nothing relevant or matched weakly. | Near-free; a call only when the cheap path failed |
 | `always` | Every step asks the router subagent. | One call per step — pair it with a cheap model |
 
-`smart` costs nothing until `routerProvider` **and** `routerModel` are both set, so the plugin spends no model calls out of the box.
+`smart` costs nothing until `routerProvider` **and** `routerModel` are both set, so the plugin spends no model calls out of the box. The **strategy** (`routerStrategy`) decides what the router is asked to prioritise — `task`, `compliance`, or `orient` — so two profiles with the same atoms and the same tier can still recall differently.
+
+### Two independent properties
+
+An atom has a **weight** (1–5: how important it is) and a **standing** flag (whether it is a rule that must hold). They are separate on purpose, and conflating them was a real bug:
+
+- weight is a *ranking* input — a high-weight fact outranks a low-weight fact;
+- standing is an *eligibility* input — a standing rule is kept **even when it does not match the current request**, because a rule that only applies when you happen to mention it is not a rule.
+
+Standing is decided by kind (`constraint`), never by weight. `STANDING_MIN_WEIGHT` was the old gate and is now deprecated: it silently dropped every constraint stored at weight 2, which on a real store meant 32 of 66 hard rules were ineligible. Standing atoms still obey the count and token caps — a budget share, not an exemption — so this is not a rules wall; on a measured real recall only one atom was kept *purely* on standing, and the rest genuinely matched.
+
+The router cannot override this. Standing atoms are selected before the router is consulted, and a router that answers with nothing (or answers badly, or times out) leaves them in place. The router chooses what to *add*, never what to *remove*.
 
 ## What it will not do
 
@@ -137,6 +147,23 @@ Fifteen tools. `memory_status` is the one to call first in any unfamiliar sessio
 
 `/memory-route` is a dry run: it shows which route the current tier would take and why, without spending a model call.
 
+### Sidebar panel
+
+The plugin adds one entry to the left sidebar — **project memory** — which opens a panel showing:
+
+- live and forgotten atom counts, **how many are standing hard rules**, and the breakdown by kind and by weight;
+- the compaction ledger: how many compactions were observed, how many produced atoms, and why the rest produced nothing;
+- the current recall budget and limits;
+- the router controls: **when** to route (`off` / `smart` / `always`), **what to prioritise** (`task` / `compliance` / `orient`), and the provider/model.
+
+The strategy is not decoration: each value sends a different instruction set to the router model, so the same atoms are weighed differently. `compliance` asks the router to hold rules that govern the files in play even when their wording looks unrelated to the request; `task` asks it to prefer what this step is about to do; `orient` asks it to prefer how the subsystem works, for requests that want to understand rather than act.
+
+Saving goes through the host's `configEditor`, so a change takes effect the same way any other config change does — no hand-edited YAML that only applies after a restart and disagrees with the running config in the meantime. If a profile does not expose `configEditor`, the panel says so instead of reporting a save that did not happen.
+
+The panel has no controls that change memory. Atoms are written by compaction and by tools that carry provenance and honour tombstones; a browser button that deleted one would bypass both, so removal stays `memory_forget`.
+
+Its two endpoints are loopback-only. They reveal project memory and can change how routing behaves, so a request from another host is refused rather than served.
+
 ### Context injection
 
 On the first step of a session the plugin injects a baseline (project identity, git facts, current task, invariants, next steps, blockers, decisions, document map) that fits `l0Budget`/`l1Budget`. It re-sends only when the identity changes, and it checks the session surface before sending so a compacted or resumed session is not given a duplicate. A re-send is a baseline; nothing is injected when nothing changed.
@@ -181,7 +208,7 @@ Everything lives under `.dsh-memory/` in the project root. Commit it or ignore i
 ```powershell
 npm run setup        # extract host packages from the installed app.asar and link them
 npm test             # 14 unit tests for the pure core/ layer (no DSH needed)
-npm run test:host    # twelve host-level checks against the real harness
+npm run test:host    # fourteen host-level checks against the real harness
 ```
 
 `npm run setup` is the one-time (and idempotent) prerequisite for `test:host`. It reads the packages out of the installed Desktop payload rather than `npm install`, so the tests run against the exact host this plugin will load into.
@@ -202,6 +229,8 @@ npm run test:host    # twelve host-level checks against the real harness
 | `patch.mjs` | `cordis.patch.yml` resolves through the host's own `bundlePatchPaths` and inserts a loadable plugin. |
 | `mount.mjs` | The plugin mounts into a real cordis context with the real `ToolRuntime`, and disposes. |
 | `loop.mjs` | The closed loop: a compaction event writes atoms through the real event bus, the next step recalls them sparsely, a replay is idempotent, a repeat is not re-injected, and a forget is honoured. |
+| `panel.mjs` | The sidebar's endpoints over real HTTP: they report the same store and ledger the tools read, write settings only through the host's `configEditor`, reject a value outside the accepted set, refuse a non-loopback peer, and disclose a corrupt line instead of reporting an empty store. |
+| `client.mjs` | The Client half: one sidebar entry and one *matching* main panel, every string present in both languages with the same placeholders, and routes and choices identical to the host's. |
 
 `npm test` covers path containment, front-matter parsing, index derivation, search ranking, guard framing, budget fitting, architecture checking, atomic writes, locking, state merging, and the whole atom layer (identity, tombstones, the sparse gate, route tiers, extraction, the router, recall, and the compaction observer).
 
@@ -234,6 +263,7 @@ Every field has a working default. Invalid values are repaired, not fatal — a 
 | `injectRecall` | `true` | Let a step receive a recall block. |
 | `recallBudget` / `recallLimit` | `400` / `8` | Token ceiling and atom count for one recall. |
 | `routerTier` | `smart` | `off`, `smart`, or `always`. See the tier table above. |
+| `routerStrategy` | `task` | `task`, `compliance`, or `orient`. Selects the instruction set sent to the router model. |
 | `routerProvider` / `routerModel` | `''` / `''` | The router's model. `smart` stays free until both are set. |
 | `routerReasoningEffort` | `''` | Passed through to the router model, when the model supports it. |
 | `routerTimeoutMs` | `20000` | Upper bound on one router call. |
@@ -258,6 +288,9 @@ lib/           the cordis layer
   compaction-memory.js  session/event observer
   recall.js    one step's recall   router.js    router prompt and parsing
   delegate.js  subagent activation
+  panel.js     the sidebar panel's two loopback routes
+  settings-write.js  persisting a panel change through configEditor
+client.js      the sidebar panel (Client half, loaded by the web shell)
 tests/unit/    pure-core tests (node --test)
 tests/*.mjs    host-level checks against the real harness
 docs/          design notes and doc proposals
@@ -270,9 +303,11 @@ scripts/       host-package extraction and linking for the tests
 
 ## Known limitations
 
-See [LIMITATIONS.md](./LIMITATIONS.md). The short version: search is lexical, not semantic; the router is bounded by `routerTimeoutMs` and degrades to deterministic selection; atoms are not authoritative documents; and there is no automatic commit, no cross-project query, and no client UI.
+See [LIMITATIONS.md](./LIMITATIONS.md). The short version: search is lexical, not semantic; the router is bounded by `routerTimeoutMs` and degrades to deterministic selection; atoms are not authoritative documents; and there is no automatic commit and no cross-project query.
 
-The router subagent has **never run against a live model**. Its unit tests cover timeout, abort, malformed reply, and unknown ids with a stubbed delegate, and its construction is checked against the real `startActivation` signature — but no real spawn has been observed producing a real selection. Failure degrades to deterministic selection, so the worst case is a missed improvement, not a broken step.
+The router subagent has **never run against a live model**. Its unit tests cover timeout, abort, malformed reply, and unknown ids with a stubbed delegate, and its construction is checked against the real `startActivation` signature — but no real spawn has been observed producing a real selection. Its prompt is therefore unmeasured: the strategies change what it is asked for, and no accuracy figure is claimed for any of them. Failure degrades to deterministic selection, so the worst case is a missed improvement, not a broken step.
+
+Extraction is stricter than it used to be — only known compaction sections are read, only Markdown list items become atoms, and a section heading no longer decides a kind — but it is still deterministic pattern matching, not judgement. A paragraph that states a rule without a bullet is not extracted; state it with `memory_remember`.
 
 ---
 

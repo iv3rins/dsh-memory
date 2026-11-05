@@ -37,6 +37,15 @@ harder to correct than an acknowledged blank.
   `dsh.profile.bundles` automatically, loads at host startup, and serves all fifteen
   tools plus a live-updating L1 baseline and a per-step recall block. (observed in a
   running desktop session)
+- The sidebar panel's two endpoints answer over real HTTP, report the same store and
+  ledger the tools read (asserted against `readAtoms` directly, not against a copy), write
+  a setting only through the host's `configEditor`, reject a value outside the closed set,
+  reject an unsupported method, refuse a non-loopback peer on both routes, and disclose an
+  unparseable store line instead of reporting an empty store. (`tests/panel.mjs`)
+- The Client half registers exactly one sidebar entry and one main panel whose key matches
+  that entry's id; every string the panel asks for exists in both languages with identical
+  placeholders and no unused key; and its routes and choice values match the host's
+  constants. (`tests/client.mjs`)
 
 ## Not verified end to end
 
@@ -51,6 +60,16 @@ harder to correct than an acknowledged blank.
   `startActivation` signature — but no real spawn has been observed producing a real
   selection. The `smart` tier degrades to deterministic selection if the router fails,
   so the failure mode is a missed improvement, not a broken step.
+- **The router's prompt is therefore unmeasured.** Three strategies exist (`task`,
+  `compliance`, `orient`) and each sends different instructions, but no accuracy figure
+  is claimed for any of them, and none has been compared against another on a real model.
+  What *is* structurally guaranteed is the floor: standing atoms are selected before the
+  router is consulted, so an empty, malformed, or timed-out answer cannot remove a hard
+  rule. That is a property of the selection order, not a claim about model quality.
+- **The panel has never been rendered by a human.** Its registration, dictionaries, and
+  route agreement are asserted statically (`tests/client.mjs`), and its endpoints are
+  exercised over real HTTP (`tests/panel.mjs`), but no browser has drawn it: layout,
+  keyboard behaviour, and theme-variable fallbacks are unchecked.
 - **Injection is observed, but the compaction-shadow case is not.** The L1 baseline
   arrived in the running session and updated live after a `state_update`, and the recall
   block arrives with its own source kind. The *shadowing* case — a recall message removed
@@ -106,9 +125,24 @@ harder to correct than an acknowledged blank.
   staleness. It never commits, branches, merges, or pushes.
 - **No cross-project query.** One project root per call. A monorepo's sub-projects are
   separate memories.
-- **No client UI.** No sidebar panel, no status indicator. Everything is tools,
-  commands, and injected context.
-- **`docs_sync` never rewrites authoritative docs.** It refuses `AGENTS.md`,
+- **The sidebar panel reads; it does not edit memory.** It reports counts, the ledger,
+  and the router settings, and it can change those settings. There is no control that
+  writes, edits, or deletes an atom: memory is written by compaction and by tools that
+  carry provenance and honour tombstones, and a browser button doing either would bypass
+  both. Removal is `memory_forget`.
+- **The panel's numbers are only as fresh as its last read.** It refetches when it
+  opens and when the user asks; it does not subscribe to store changes. A panel left
+  open across a compaction shows the counts from before it.
+- **The panel cannot save in a profile that does not expose `configEditor`.** It says so
+  rather than reporting a save that did not happen, but the settings then have to be
+  changed in the profile's config file instead.
+- **The panel's endpoints are loopback-only and unauthenticated.** That is deliberate —
+  they reveal project memory and can change routing, so a remote peer is refused — but
+  it also means any process on this machine that can reach the port can read the same
+  summary and change the same settings.
+- **The panel is the only UI, and it is read-mostly.** There is no status indicator in
+  the conversation and no inline badge. Everything else is tools, commands, and
+  injected context.- **`docs_sync` never rewrites authoritative docs.** It refuses `AGENTS.md`,
   `docs/decisions/`, `docs/adr/`, and `.git/`, and writes proposals to
   `docs/proposals/`. That refusal is the design, not a missing feature.
 - **`architecture_check` implements one rule kind.** `forbid-import`, checked with a

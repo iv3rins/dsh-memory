@@ -27,11 +27,16 @@
   "exports": {
     ".": "./lib/index.js",
     "./core/*": "./core/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./client.js",
+    "./icon": "./icon.svg"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
     }
   },
   "engines": {
@@ -49,6 +54,8 @@
   "files": [
     "lib",
     "core",
+    "client.js",
+    "icon.svg",
     "cordis.patch.yml",
     "README.md",
     "LIMITATIONS.md",
@@ -59,7 +66,7 @@
     "extract:harness": "node scripts/extract-harness.mjs @deepseek-ai/cordis @deepseek-ai/dsh-tools @deepseek-ai/dsh-llm @deepseek-ai/dsh-system-prompt @deepseek-ai/dsh-app-boot @deepseek-ai/dsh-plugin-manager",
     "setup": "npm run extract:harness && node scripts/resolve-host-deps.mjs @deepseek-ai/dsh-tools && node scripts/resolve-host-deps.mjs @deepseek-ai/dsh-app-boot && npm run link:harness",
     "test": "node --test \"tests/unit/*.test.mjs\"",
-    "test:host": "node tests/smoke.mjs && node tests/tools.mjs && node tests/cordis-semantics.mjs && node tests/inject.mjs && node tests/safety.mjs && node tests/degrade.mjs && node tests/continuity.mjs && node tests/root.mjs && node tests/compat.mjs && node tests/patch.mjs && node tests/mount.mjs && node tests/loop.mjs",
+    "test:host": "node tests/smoke.mjs && node tests/tools.mjs && node tests/cordis-semantics.mjs && node tests/inject.mjs && node tests/safety.mjs && node tests/degrade.mjs && node tests/continuity.mjs && node tests/root.mjs && node tests/compat.mjs && node tests/patch.mjs && node tests/mount.mjs && node tests/loop.mjs && node tests/panel.mjs && node tests/client.mjs",
     "test:all": "npm test && npm run test:host"
   }
 }

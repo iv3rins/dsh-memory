@@ -26,6 +26,9 @@ _shots/
 dev.log
 tmp-*.cjs
 tmp-*.mjs
+# Commit messages and other one-off text used while working. `tmp-msg.txt` was
+# committed by mistake once because only the two extensions above were covered.
+tmp-*.txt
 
 # Decoded session logs used for the compaction trace audit (docs/design/
 # compaction-trace-audit.md). ~88 MB of raw conversation, never committed.

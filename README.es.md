@@ -7,10 +7,10 @@ Conocimiento persistente a nivel de proyecto y memoria del estado de desarrollo 
 
 Un agente lo olvida todo cuando termina una sesión, cuando se compacta el contexto o cuando cambias de rama. Para un proyecto que sobrevive a decenas de sesiones, eso significa volver a deducir las mismas decisiones, releer los mismos documentos y repetir los mismos errores. Este plugin le da a un proyecto una memoria que vive **en el repositorio en lugar de en una ventana de contexto**.
 
-Es un **plugin de [cordis](https://github.com/deepseek-ai/cordis) solo para el host**: registra herramientas de agente, una sección del system prompt y comandos de barra. No hay mitad de navegador ni cambios en DSH.
+Es un **plugin de [cordis](https://github.com/deepseek-ai/cordis) centrado en el host**: registra herramientas de agente, una sección del system prompt y comandos de barra. También incluye una pequeña **mitad de navegador**: un panel en la barra lateral que lee el host por dos rutas de loopback y no añade trabajo al host. No modifica DSH.
 
 ```
-Licencia MIT · Node 20+ · solo host, sin parte cliente
+Licencia MIT · Node 20+ · plugin de host + un panel lateral
 ```
 
 ---
@@ -28,6 +28,7 @@ Licencia MIT · Node 20+ · solo host, sin parte cliente
 - [Licencia](#licencia)
 
 ---
+
 
 ## Tres sistemas, a propósito
 
@@ -48,6 +49,17 @@ Un subagente puede actuar como enrutador cuando la puntuación léxica no basta.
 | `always` | Cada paso pregunta al subagente enrutador. | Una llamada por paso — úsalo con un modelo barato |
 
 `smart` no cuesta nada hasta que `routerProvider` **y** `routerModel` estén ambos definidos, así que el plugin no gasta ninguna llamada al modelo recién instalado.
+
+### Dos propiedades independientes
+
+Un átomo tiene un **peso** (weight, 1–5: cuán importante es) y una marca de **permanencia** (standing: si es una regla que debe cumplirse). Son cosas distintas a propósito, y confundirlas fue un defecto real:
+
+- el peso es una entrada de **ordenación**: un hecho de peso alto va antes que uno de peso bajo;
+- la permanencia es una entrada de **elegibilidad**: una regla permanente se conserva **aunque no coincida con la petición actual**, porque una regla que solo se aplica cuando casualmente la mencionas no es una regla.
+
+La permanencia la decide el tipo (`constraint`), nunca el peso. `STANDING_MIN_WEIGHT` era el criterio antiguo y está obsoleto: descartaba en silencio toda restricción guardada con peso 2, lo que en un almacén real significaba que 32 de 66 reglas duras quedaban inelegibles. Los átomos permanentes siguen sujetos a los topes de recuento y de tokens —es una cuota del presupuesto, no una excepción—, así que esto no es un muro de reglas; en un recuerdo real medido solo un átomo se conservó **únicamente** por permanencia y el resto coincidía de verdad.
+
+El enrutador no puede anular esto. Los átomos permanentes se eligen **antes** de consultar al enrutador, y un enrutador que responde vacío, responde mal o agota el tiempo no los elimina. El enrutador decide qué **añadir**, nunca qué **quitar**.
 
 ## Lo que no hará
 
@@ -137,6 +149,23 @@ Quince herramientas. `memory_status` es la primera que hay que llamar en cualqui
 
 `/memory-route` es un simulacro: muestra qué ruta tomaría el nivel actual y por qué, **sin gastar** ninguna llamada al modelo.
 
+### Panel de la barra lateral
+
+El plugin añade una entrada a la barra lateral izquierda — **memoria del proyecto** — que abre un panel con:
+
+- el número de átomos vigentes y olvidados, **cuántos son reglas duras permanentes**, y el desglose por tipo y por peso;
+- el registro de compactaciones: cuántas se observaron, cuántas produjeron átomos y por qué el resto no produjo nada;
+- el presupuesto y los límites de recuerdo actuales;
+- los controles de enrutado: **cuándo** enrutar (`off` / `smart` / `always`), **qué priorizar** (`task` / `compliance` / `orient`), y el proveedor y el modelo.
+
+La estrategia no es decoración: cada valor envía un conjunto distinto de instrucciones al modelo enrutador, así que los mismos átomos se ponderan de otra manera. `compliance` pide al enrutador que conserve las reglas que gobiernan los archivos en juego aunque su redacción parezca ajena a la petición; `task` pide que prefiera aquello que este paso está a punto de hacer; `orient` pide que prefiera cómo funciona el subsistema, para peticiones que buscan entender en lugar de actuar.
+
+Guardar pasa por el `configEditor` del host, así que un cambio se aplica igual que cualquier otro cambio de configuración: no queda un YAML editado a mano que no surte efecto hasta reiniciar y que mientras tanto contradice la configuración en ejecución. Si un perfil no expone `configEditor`, el panel lo dice en lugar de informar de un guardado que no ocurrió.
+
+El panel no tiene controles que modifiquen la memoria. Los átomos los escriben la compactación y las herramientas que llevan procedencia y respetan las lápidas; un botón del navegador que borrara uno saltaría ambos, así que la eliminación sigue siendo `memory_forget`.
+
+Sus dos endpoints son solo de loopback. Revelan la memoria del proyecto y pueden cambiar el comportamiento del enrutado, así que una petición de otro host se rechaza en lugar de atenderse.
+
 ### Inyección de contexto
 
 En el primer paso de una sesión, el plugin inyecta una línea base (identidad del proyecto, datos de git, tarea actual, invariantes, siguientes pasos, bloqueos, decisiones, mapa de documentos) que cabe en `l0Budget`/`l1Budget`. Solo la reenvía cuando cambia la identidad, y comprueba la superficie de la sesión antes de enviar, de modo que una sesión compactada o reanudada no reciba un duplicado. Un reenvío es una línea base; no se inyecta nada cuando nada cambió.
@@ -181,7 +210,7 @@ Todo vive bajo `.dsh-memory/` en la raíz del proyecto. Confirmarlo o ignorarlo:
 ```powershell
 npm run setup        # extrae del app.asar instalado los paquetes del host y los enlaza
 npm test             # 14 pruebas unitarias de la capa core/ pura (sin DSH)
-npm run test:host    # doce comprobaciones a nivel de host contra el harness real
+npm run test:host    # catorce comprobaciones a nivel de host contra el harness real
 ```
 
 `npm run setup` es el requisito previo, de una sola vez (e idempotente), para `test:host`. Lee los paquetes del payload de escritorio instalado en lugar de usar `npm install`, así que las pruebas se ejecutan contra el host exacto en el que este plugin se cargará.
@@ -202,6 +231,8 @@ npm run test:host    # doce comprobaciones a nivel de host contra el harness rea
 | `patch.mjs` | `cordis.patch.yml` resuelve a través de los `bundlePatchPaths` del propio host e inserta un plugin cargable. |
 | `mount.mjs` | El plugin monta en un contexto cordis real con el `ToolRuntime` real, y se desmonta limpiamente. |
 | `loop.mjs` | El bucle cerrado: un evento de compactación escribe átomos por el bus de eventos real, el siguiente paso los recuerda de forma dispersa, una repetición es idempotente, un duplicado no se reinyecta y un olvido se respeta. |
+| `panel.mjs` | Los endpoints de la barra lateral sobre HTTP real: informan del mismo almacén y registro que leen las herramientas, escriben ajustes solo mediante el `configEditor` del host, rechazan un valor fuera del conjunto aceptado, rechazan a un par que no sea loopback y declaran una línea corrupta en lugar de informar de un almacén vacío. |
+| `client.mjs` | La mitad de navegador: una entrada lateral y un panel principal **que le corresponde**, todas las cadenas presentes en ambos idiomas con los mismos marcadores, y rutas y opciones idénticas a las del host. |
 
 `npm test` cubre contención de rutas, análisis de front-matter, derivación del índice, ordenación de búsqueda, enmarcado de guard, ajuste al presupuesto, comprobación de arquitectura, escrituras atómicas, bloqueo, fusión de estado y toda la capa de átomos (identidad, lápidas, la compuerta dispersa, niveles de ruta, extracción, el enrutador, el recuerdo y el observador de compactación).
 
@@ -234,6 +265,7 @@ Cada campo tiene un valor por defecto funcional. Los valores inválidos se repar
 | `injectRecall` | `true` | Permite que un paso reciba un bloque de recuerdo. |
 | `recallBudget` / `recallLimit` | `400` / `8` | Techo de tokens y número de átomos por recuerdo. |
 | `routerTier` | `smart` | `off`, `smart` o `always`. Ver la tabla de niveles arriba. |
+| `routerStrategy` | `task` | `task`, `compliance` u `orient`. Elige el conjunto de instrucciones que recibe el modelo enrutador. |
 | `routerProvider` / `routerModel` | `''` / `''` | El modelo del enrutador. `smart` sigue siendo gratis hasta que ambos estén definidos. |
 | `routerReasoningEffort` | `''` | Se pasa al modelo enrutador, cuando lo soporta. |
 | `routerTimeoutMs` | `20000` | Cota de una llamada al enrutador. |
@@ -258,6 +290,9 @@ lib/           la capa cordis
   compaction-memory.js  observador de session/event
   recall.js    recuerdo de un paso   router.js   prompt y análisis del enrutador
   delegate.js  activación del subagente
+  panel.js     las dos rutas de loopback del panel lateral
+  settings-write.js  persiste un cambio del panel mediante configEditor
+client.js      el panel lateral (mitad de navegador, la carga el shell web)
 tests/unit/    pruebas del core puro (node --test)
 tests/*.mjs    comprobaciones a nivel de host contra el harness real
 docs/          notas de diseño y propuestas de documentos
@@ -270,9 +305,11 @@ scripts/       extracción y enlace de paquetes del host para las pruebas
 
 ## Limitaciones conocidas
 
-Ver [LIMITATIONS.md](./LIMITATIONS.md). La versión corta: la búsqueda es léxica, no semántica; el enrutador está acotado por `routerTimeoutMs` y degrada a selección determinista; los átomos no son documentos autorizados; y no hay commit automático, ni consulta entre proyectos, ni interfaz de cliente.
+Ver [LIMITATIONS.md](./LIMITATIONS.md). La versión corta: la búsqueda es léxica, no semántica; el enrutador está acotado por `routerTimeoutMs` y degrada a selección determinista; los átomos no son documentos autorizados; y no hay commit automático ni consulta entre proyectos.
 
-El subagente enrutador **nunca se ha ejecutado contra un modelo real**. Sus pruebas unitarias cubren tiempo de espera, aborto, respuesta malformada e ids desconocidos con un delegado simulado, y su construcción se comprueba contra la firma real de `startActivation` — pero no se ha observado ningún spawn real produciendo una selección real. El fallo degrada a selección determinista, así que el peor caso es perder una mejora, no romper un paso.
+El subagente enrutador **nunca se ha ejecutado contra un modelo real**. Sus pruebas unitarias cubren tiempo de espera, aborto, respuesta malformada e ids desconocidos con un delegado simulado, y su construcción se comprueba contra la firma real de `startActivation` — pero no se ha observado ningún spawn real produciendo una selección real. El fallo degrada a selección determinista, así que el peor caso es perder una mejora, no romper un paso. Por eso su prompt está **sin medir**: las estrategias cambian qué se le pide, y no se afirma ninguna cifra de precisión para ninguna de ellas.
+
+El extractor es más estricto que antes —solo lee secciones de compactación conocidas, solo los elementos de lista de Markdown se convierten en átomos, y un encabezado de sección ya no decide el tipo—, pero sigue siendo coincidencia de patrones determinista, no criterio. Un párrafo que enuncia una regla sin viñeta no se extrae: decláralo con `memory_remember`.
 
 ---
 
