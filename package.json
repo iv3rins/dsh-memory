@@ -2,7 +2,7 @@
   "name": "@dsh-external/dsh-project-memory",
   "version": "0.1.0",
   "private": false,
-  "description": "Project-level persistent knowledge and development-state memory for DeepSeek Harness: a documentation knowledge system (Markdown as source of truth) plus a development state system (task/progress/git/handoff) that survives session restarts, context compaction, and branch switches. Host-only cordis plugin, no dsh source changes.",
+  "description": "Project-level knowledge and development-state memory for DeepSeek Harness: Markdown docs as source of truth, a state system (task/progress/git/handoff) that survives restarts, compaction, and branch switches, and memory atoms recalled by sparse routing. Host-side cordis plugin plus one sidebar panel.",
   "author": "iverins",
   "license": "MIT",
   "repository": {
