@@ -1,0 +1,12 @@
+# dsh-project-memory bundle patch: inserts the plugin row into the profile
+# roster. Applied as a profile bundle layer (the `dsh.bundle.patch` manifest
+# field) over dsh-base; activate with
+# `dsh plugin --profile <name> add -w link:<plugin-directory>`
+# and restart the host.
+#
+# The row is a bare host-only plugin by package name: the node half
+# (exports ".") runs in the host process and registers agent tools, a system
+# prompt section, and slash commands. There is no browser half.
+- insert:
+    - id: project-memory
+      name: '@dsh-external/dsh-project-memory'

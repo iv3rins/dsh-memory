@@ -1,0 +1,57 @@
+{
+  "name": "@dsh-external/dsh-project-memory",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Project-level persistent knowledge and development-state memory for DeepSeek Harness: a documentation knowledge system (Markdown as source of truth) plus a development state system (task/progress/git/handoff) that survives session restarts, context compaction, and branch switches. Host-only cordis plugin, no dsh source changes.",
+  "author": "iverins",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "deepseek-harness",
+    "memory",
+    "context-compaction",
+    "agent-memory"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./core/*": "./core/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0-rc.0 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.0 <0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  },
+  "files": [
+    "lib",
+    "core",
+    "cordis.patch.yml",
+    "README.md",
+    "LIMITATIONS.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "link:harness": "node scripts/link-harness.mjs",
+    "extract:harness": "node scripts/extract-harness.mjs @deepseek-ai/cordis @deepseek-ai/dsh-tools @deepseek-ai/dsh-llm @deepseek-ai/dsh-system-prompt @deepseek-ai/dsh-app-boot @deepseek-ai/dsh-plugin-manager",
+    "setup": "npm run extract:harness && node scripts/resolve-host-deps.mjs @deepseek-ai/dsh-tools && node scripts/resolve-host-deps.mjs @deepseek-ai/dsh-app-boot && npm run link:harness",
+    "test": "node --test \"tests/unit/*.test.mjs\"",
+    "test:host": "node tests/smoke.mjs && node tests/tools.mjs && node tests/cordis-semantics.mjs && node tests/inject.mjs && node tests/safety.mjs && node tests/degrade.mjs && node tests/continuity.mjs && node tests/root.mjs && node tests/compat.mjs && node tests/patch.mjs && node tests/mount.mjs && node tests/loop.mjs",
+    "test:all": "npm test && npm run test:host"
+  }
+}

@@ -1,0 +1,64 @@
+# Everything below is either generated, machine-local, or a by-product of the
+# development process rather than the plugin itself. The published package is
+# `lib`, `core`, `cordis.patch.yml`, `README.md`, and `LIMITATIONS.md` (see the
+# `files` field in package.json); anything else listed here is not shipped.
+
+# --- Dependencies -------------------------------------------------------------
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+npm-shrinkwrap.json
+
+# `npm run setup` links node_modules at the extracted host packages rather than
+# installing them, so the lockfile in this repo would describe a tree that does
+# not exist. The linked tree is reproducible with `npm run setup`.
+
+# --- Extracted host packages --------------------------------------------------
+# A dump of the installed Desktop payload, produced by `npm run setup` and linked
+# into node_modules so the host tests can run against the real harness. ~96 MB of
+# third-party code, never part of this project, and stale after every DSH upgrade.
+_research/
+
+# --- Development scratch ------------------------------------------------------
+_shots/
+*.log
+dev.log
+tmp-*.cjs
+tmp-*.mjs
+
+# --- This plugin's own runtime output ----------------------------------------
+# `.dsh-memory/` is what the plugin *writes* while doing its job, not what it is:
+# project state, the document index, and the memory atom store. It is meaningful
+# to the project being remembered and meaningless to this repository, and it is
+# where a local session's notes about unrelated work accumulate. Each project that
+# installs the plugin gets its own; this checkout's copy is not source.
+#
+# A team that wants to *share* memory commits it, so this is a choice, not a rule.
+# Uncomment the negations below to do that.
+.dsh-memory/
+
+# --- Editor and OS noise ------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Build and test artifacts -------------------------------------------------
+coverage/
+.nyc_output/
+*.tsbuildinfo
+*.blob
+*.snap.tmp
+
+# --- Secrets ------------------------------------------------------------------
+# The plugin never reads credentials, but a `.env` left in a checkout would be
+# published by a careless `git add -A`.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
