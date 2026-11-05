@@ -275,30 +275,43 @@ try {
     )
   }
 
-  // ------------------------------------------ readiness: a provider must be mounted
+  // ------------------------------------------ readiness: a transport must be mounted
   {
-    // This is the defect that made the router silently never run on a real profile. The
-    // subagents service is mounted on its own there, with no provider, so it accepts
-    // `startActivation` and fails every call. Readiness used to stop at "the service
-    // exists", which reported `ok` and then degraded every single step at runtime with a
-    // reason that blamed a service that was in fact present.
+    // This is the defect that made the router silently never run on a real profile.
+    //
+    // Two different names are involved and the readiness check conflated them:
+    // `routerProvider` is an LLM provider (`airelay`), while the activation `provider`
+    // is the subagent *transport* (`spawn`). The check used to look for the LLM provider
+    // in the subagents registry, so a correctly configured profile failed with
+    // `provider "airelay" is not mounted (available: spawn)` and no routing ever ran.
     const working = { list: () => ['spawn', 'fork'], startActivation: async () => {} }
     const bare = { list: () => [], startActivation: async () => {} }
     const unknown = { startActivation: async () => {} }
     const ctxWith = (service) => ({ get: (name) => (name === 'subagents' ? service : undefined) })
-    const ready = (ctx, provider = 'spawn') =>
-      delegate.routerReadiness({ ctx, tier: 'always', provider, model: 'deepseek-chat' })
+    // The configured LLM provider is deliberately NOT a transport name: that is the
+    // real-world shape this test must keep covering.
+    const ready = (ctx, provider = 'airelay') =>
+      delegate.routerReadiness({ ctx, tier: 'always', provider, model: 'deepseek-v4.1-flash' })
 
-    assert.equal(ready(ctxWith(working)).ok, true, 'a mounted provider with the service is ready')
+    assert.equal(ready(ctxWith(working)).ok, true, 'a mounted transport with the service is ready')
 
     const noProvider = ready(ctxWith(bare))
     assert.equal(noProvider.ok, false, 'the service alone is not enough to delegate')
     assert.match(noProvider.reason, /no subagent provider is mounted/, 'the reason names the missing provider mount')
 
     const wrongProvider = ready(ctxWith({ list: () => ['fork'], startActivation: async () => {} }))
-    assert.equal(wrongProvider.ok, false, 'a provider that is not the configured one is not ready')
-    assert.match(wrongProvider.reason, /"spawn" is not mounted/, 'the reason names the provider asked for')
+    assert.equal(wrongProvider.ok, false, 'a transport that is not the one delegated to is not ready')
+    assert.match(wrongProvider.reason, /"spawn".*is not mounted/, 'the reason names the transport asked for')
     assert.match(wrongProvider.reason, /available: fork/, 'the reason names what is available instead')
+
+    // The regression this guards: an LLM provider id must never be mistaken for a
+    // transport. `airelay` is not in the registry and readiness must still be `ok`.
+    const llmProviderIsNotATransport = ready(ctxWith(working), 'airelay')
+    assert.equal(
+      llmProviderIsNotATransport.ok,
+      true,
+      'routerProvider is an LLM provider and must not be looked up in the subagent registry',
+    )
 
     // An unrecognised registry shape must not be read as "nothing mounted": that would
     // disable a router that works, which is worse than not checking at all.

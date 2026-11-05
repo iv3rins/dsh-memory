@@ -78,10 +78,22 @@ window.__ModuleLoader__.load({
       'atoms.byKind': '按类型',
       'atoms.byWeight': '按重要性',
       'compactions.title': '压缩记录',
-      'compactions.none': '还没有观测到压实。插件安装之后发生的压实才会被记录。',
-      'compactions.line': '共 {total} 次：{produced} 次写入原子，{skipped} 次没有产出',
       'compactions.reasons': '未产出的原因',
-      'compactions.last': '最近一次',
+      'compactions.headline.none': '还没有压实记录。插件安装之后发生的压实才会被记录。',
+      'compactions.headline.first': '最近一次压实写入 {added} 条原子（{when}）。',
+      'compactions.headline.stale': '最近一次压实是 {when}，已过去 {hours} 小时。下面的数字仍然有效。',
+      'compactions.headline.empty': '最近一次压实没有写入任何原子：{reason}。',
+      'compactions.timeline': '每次压实写了什么',
+      'compactions.row.added': '+{added}',
+      'compactions.row.updated': '{updated} 更新',
+      'compactions.row.unchanged': '{unchanged} 未变',
+      'compactions.row.skipped': '{reason}',
+      'compactions.row.time': '{when} · 第 {turn} 轮 · 摘要 {chars} 字',
+      'compactions.row.timeNoTurn': '{when} · 摘要 {chars} 字',
+      'compactions.row.noTime': '时间未知',
+      'compactions.total': '累计 {total} 次，{atoms} 条原子',
+      'atoms.limit': '已达上限 {limit} 条：更新的原子会挤掉较弱的旧原子。',
+      'router.section.secondary': '高级：记忆路由',
       'router.title': '记忆路由',
       'router.tier': '触发策略',
       'router.strategy': '关注重点',
@@ -149,10 +161,22 @@ window.__ModuleLoader__.load({
       'atoms.byKind': 'By kind',
       'atoms.byWeight': 'By weight',
       'compactions.title': 'Compactions',
-      'compactions.none': 'No compaction observed yet. Only compactions after this plugin was installed are recorded.',
-      'compactions.line': '{total} total: {produced} wrote atoms, {skipped} produced nothing',
       'compactions.reasons': 'Why nothing was produced',
-      'compactions.last': 'Last',
+      'compactions.headline.none': 'No compaction recorded yet. Only compactions after this plugin was installed are recorded.',
+      'compactions.headline.first': 'The last compaction wrote {added} atoms ({when}).',
+      'compactions.headline.stale': 'The last compaction was {when}, {hours} hours ago. The numbers below are still current.',
+      'compactions.headline.empty': 'The last compaction wrote no atoms: {reason}.',
+      'compactions.timeline': 'What each compaction wrote',
+      'compactions.row.added': '+{added}',
+      'compactions.row.updated': '{updated} updated',
+      'compactions.row.unchanged': '{unchanged} unchanged',
+      'compactions.row.skipped': '{reason}',
+      'compactions.row.time': '{when} \u00b7 turn {turn} \u00b7 {chars} chars summarized',
+      'compactions.row.timeNoTurn': '{when} \u00b7 {chars} chars summarized',
+      'compactions.row.noTime': 'time unknown',
+      'compactions.total': '{total} compactions, {atoms} atoms in total',
+      'atoms.limit': 'At the {limit}-atom ceiling: newer atoms displace weaker older ones.',
+      'router.section.secondary': 'Advanced: memory routing',
       'router.title': 'Memory routing',
       'router.tier': 'When to route',
       'router.strategy': 'What to prioritise',
@@ -259,6 +283,27 @@ window.__ModuleLoader__.load({
 .pm-btn:disabled { opacity: 0.45; cursor: default; }
 .pm-banner { font-size: 12.5px; padding: 9px 12px; border-radius: 8px; background: var(--dsh-surface, rgba(127,127,127,0.12)); line-height: 1.5; }
 .pm-banner.bad { border: 1px solid var(--dsh-danger, rgba(220,90,90,0.5)); }
+.pm-banner.warn { border: 1px solid rgba(200,150,40,0.4); background: rgba(200,150,40,0.12); }
+/* The leading card answers the question the panel exists for. It gets a slightly
+   stronger edge and a larger headline so the eye lands there before the totals. */
+.pm-card.lead { border-color: var(--dsh-accent, rgba(90,140,255,0.45)); }
+.pm-headline { font-size: 13.5px; line-height: 1.5; font-weight: 550; }
+/* The compaction timeline: one row per compaction, verdict on the left and provenance on
+   the right. Rows that wrote nothing are dimmed rather than hidden — "the last five wrote
+   nothing" is exactly the signal this panel must not suppress. */
+.pm-timeline { display: flex; flex-direction: column; gap: 3px; }
+.pm-tl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--dsh-surface, rgba(127,127,127,0.07)); }
+.pm-tl-row.dim { opacity: 0.62; }
+.pm-tl-verdict { font-weight: 600; font-variant-numeric: tabular-nums; flex: 0 0 auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pm-tl-when { opacity: 0.6; font-size: 11.5px; text-align: right; min-width: 0; }
+/* A collapsed secondary section. The head is a real button so it is keyboard reachable and
+   announces its expanded state; the summary keeps the current value visible while closed. */
+.pm-collapse { display: flex; flex-direction: column; gap: 10px; }
+.pm-collapse-head { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--dsh-border, rgba(127,127,127,0.22)); background: transparent; }
+.pm-collapse-head:hover { background: var(--dsh-surface, rgba(127,127,127,0.07)); }
+.pm-caret { opacity: 0.5; font-size: 10px; flex: 0 0 auto; }
+.pm-collapse-title { font-size: 12px; font-weight: 600; opacity: 0.72; flex: 0 0 auto; }
+.pm-collapse-summary { font-size: 11.5px; opacity: 0.55; margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .pm-field { display: flex; flex-direction: column; gap: 4px; }
 .pm-label { font-size: 11.5px; font-weight: 600; opacity: 0.72; }
 .pm-btn.small { font-size: 11.5px; padding: 4px 10px; }
@@ -334,6 +379,10 @@ window.__ModuleLoader__.load({
       // is the narrower and more reversible of the two: it cannot silently change every
       // other repository the user has open.
       const [scope, setScope] = useState('project')
+      // The router is a tuning knob, not the point of the panel. It starts collapsed so the
+      // first screen answers "did compaction keep my memory" instead of asking the user to
+      // configure a sub-model before they can see whether anything works.
+      const [routerOpen, setRouterOpen] = useState(false)
 
       const load = useCallback(async (root) => {
         setState((current) => ({ phase: 'loading', data: current.data, reason: null }))
@@ -561,6 +610,12 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'pm-num' }, String(atoms.standing))
                 ),
                 h('div', { className: 'pm-hint' }, t('atoms.standing.hint')),
+                // A store sitting exactly at its ceiling is not a detail: it means new
+                // knowledge displaces old knowledge instead of accumulating, and a user
+                // watching this number stop moving deserves to know why.
+                atoms.atLimit === true
+                  ? h('div', { className: 'pm-banner warn' }, fill(t('atoms.limit'), { limit: String(atoms.limit) }))
+                  : null,
                 h('div', { className: 'pm-muted' }, t('atoms.byKind')),
                 h(
                   'div',
@@ -582,36 +637,103 @@ window.__ModuleLoader__.load({
                 )
               )
 
+      // The panel's headline. It answers the one question a user opens this panel with —
+      // "did compacting my conversation keep the memory?" — before showing any totals.
+      // Totals were the old first thing on screen and they answered a different question:
+      // they said memory exists, not whether it is still being written.
+      const recent = Array.isArray(compactions.recent) ? compactions.recent : []
+      const latest = recent.length > 0 ? recent[0] : null
+
+      /** Format an ISO timestamp for a non-technical reader; never throws on junk. */
+      const formatWhen = (value) => {
+        if (typeof value !== 'string' || value === '') return t('compactions.row.noTime')
+        const parsed = new Date(value)
+        if (Number.isNaN(parsed.getTime())) return t('compactions.row.noTime')
+        // Local time, date and minute only: the user is asking "was this recent", and a
+        // full ISO string makes that question harder to answer at a glance.
+        return parsed.toLocaleString()
+      }
+
+      const hoursSince = (value) => {
+        if (typeof value !== 'string' || value === '') return null
+        const parsed = new Date(value)
+        if (Number.isNaN(parsed.getTime())) return null
+        return Math.floor((Date.now() - parsed.getTime()) / 3600000)
+      }
+
+      const headline =
+        latest === null
+          ? t('compactions.headline.none')
+          : latest.added > 0
+            ? (() => {
+                const age = hoursSince(latest.at)
+                // A stale-but-working plugin looks exactly like a broken one if the panel
+                // only ever says "the last one worked". Naming the gap is the difference.
+                if (age !== null && age >= 24) {
+                  return fill(t('compactions.headline.stale'), { when: formatWhen(latest.at), hours: String(age) })
+                }
+                return fill(t('compactions.headline.first'), { added: String(latest.added), when: formatWhen(latest.at) })
+              })()
+            : fill(t('compactions.headline.empty'), { reason: String(latest.skipReason ?? '\u2014') })
+
+      /** One row of the compaction timeline. */
+      const compactionRow = (row, index) => {
+        const when =
+          row.turn === null
+            ? fill(t('compactions.row.timeNoTurn'), { when: formatWhen(row.at), chars: String(row.summaryChars) })
+            : fill(t('compactions.row.time'), { when: formatWhen(row.at), turn: String(row.turn), chars: String(row.summaryChars) })
+        // A row's verdict is one of three shapes, and they must not look alike: atoms
+        // written (the good case), a reason it wrote nothing (the case worth acting on),
+        // and a replay that changed nothing (routine).
+        const verdict =
+          row.added > 0
+            ? fill(t('compactions.row.added'), { added: String(row.added) })
+            : row.skipReason !== null
+              ? fill(t('compactions.row.skipped'), { reason: row.skipReason })
+              : row.updated > 0
+                ? fill(t('compactions.row.updated'), { updated: String(row.updated) })
+                : fill(t('compactions.row.unchanged'), { unchanged: String(row.unchanged) })
+        return h(
+          'div',
+          { className: row.added > 0 ? 'pm-tl-row' : 'pm-tl-row dim', key: row.compactionId ?? `row-${index}` },
+          h('span', { className: 'pm-tl-verdict' }, verdict),
+          h('span', { className: 'pm-tl-when' }, when)
+        )
+      }
+
       const compactionSection = h(
         'div',
-        { className: 'pm-card' },
+        { className: 'pm-card lead' },
         h('div', { className: 'pm-card-title' }, t('compactions.title')),
+        h('div', { className: 'pm-headline' }, headline),
         compactions.readable !== true
           ? h('div', { className: 'pm-muted' }, String(compactions.reason))
-          : compactions.total === 0
-            ? h('div', { className: 'pm-muted' }, t('compactions.none'))
-            : h(
+          : null,
+        compactions.readable === true && compactions.total > 0
+          ? h('div', { className: 'pm-muted' }, fill(t('compactions.total'), { total: String(compactions.total), atoms: String(compactions.atoms) }))
+          : null,
+        recent.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+              h('div', { className: 'pm-hint' }, t('compactions.timeline')),
+              h('div', { className: 'pm-timeline' }, recent.map(compactionRow))
+            ),
+        Object.keys(compactions.byReason ?? {}).length > 0
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              h('div', { className: 'pm-hint' }, t('compactions.reasons')),
+              h(
                 'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-                h('div', { className: 'pm-muted' }, fill(t('compactions.line'), compactions)),
-                Object.keys(compactions.byReason).length > 0
-                  ? h(
-                      'div',
-                      { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-                      h('div', { className: 'pm-hint' }, t('compactions.reasons')),
-                      h(
-                        'div',
-                        { className: 'pm-chips' },
-                        Object.entries(compactions.byReason).map(([reason, count]) =>
-                          h('span', { className: 'pm-chip', key: reason }, `${reason} ${count}`)
-                        )
-                      )
-                    )
-                  : null,
-                compactions.lastAt === null
-                  ? null
-                  : h('div', { className: 'pm-hint' }, `${t('compactions.last')}: ${compactions.lastAt}`)
+                { className: 'pm-chips' },
+                Object.entries(compactions.byReason).map(([reason, count]) =>
+                  h('span', { className: 'pm-chip', key: reason }, `${reason} ${count}`)
+                )
               )
+            )
+          : null
       )
 
       // One radio option. The mark, the label and the description share a baseline row so
@@ -757,7 +879,7 @@ window.__ModuleLoader__.load({
             )
       )
 
-      const routerSection = h(
+      const routerBody = h(
         'div',
         { className: 'pm-card' },
         h('div', { className: 'pm-card-title' }, t('router.title')),
@@ -854,6 +976,26 @@ window.__ModuleLoader__.load({
           : h('div', { className: saveReason.ok ? 'pm-banner' : 'pm-banner bad' }, saveReason.text)
       )
 
+      // Collapsed by default. The summary line stays visible so the current routing state is
+      // never hidden — only the controls are. Someone who wants to tune it opens it;
+      // everyone else gets a first screen about memory instead of about configuration.
+      const routerSection = h(
+        'div',
+        { className: 'pm-collapse' },
+        h(
+          'button',
+          {
+            className: 'pm-collapse-head',
+            'aria-expanded': routerOpen,
+            onClick: () => setRouterOpen((open) => !open)
+          },
+          h('span', { className: 'pm-caret' }, routerOpen ? '\u25be' : '\u25b8'),
+          h('span', { className: 'pm-collapse-title' }, t('router.section.secondary')),
+          h('span', { className: 'pm-collapse-summary' }, `${settings.routerTier} \u00b7 ${settings.routerStrategy}`)
+        ),
+        routerOpen ? routerBody : null
+      )
+
       const recallSection = h(
         'div',
         { className: 'pm-card' },
@@ -876,6 +1018,13 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: 'pm-panel' },
+        // The stylesheet must be a rendered element, not a `CSS` string returned from
+        // `apply`. The host ignores extra return fields, so exporting `CSS` meant these
+        // rules were never installed: every class below rendered as unstyled text, which
+        // is exactly the wall of labels the panel was reported as. As an element inside
+        // the tree it is installed when the panel mounts and removed when it unmounts,
+        // which is also the lifetime the rules need.
+        h('style', { key: 'pm-css' }, CSS),
         h(
           'div',
           { className: 'pm-head' },
@@ -884,9 +1033,13 @@ window.__ModuleLoader__.load({
             ? null
             : h('div', { className: 'pm-hint' }, t('router.saving'))
         ),
-        projectSection,
-        atomSection,
+        // Order is the answer to "what is this panel for". Compaction-to-memory comes
+        // first because that is the automatic path a user actually relies on; routing is
+        // a tuning knob that most sessions never touch, so it sits last among the
+        // settings rather than above the information.
         compactionSection,
+        atomSection,
+        projectSection,
         scopeSection,
         routerSection,
         recallSection
@@ -915,6 +1068,9 @@ window.__ModuleLoader__.load({
       )
     }
 
-    return { inject: ['slots', 'locale'], apply, CSS }
+    // `CSS` is deliberately not returned: the host reads only `inject` and `apply`, and
+    // an extra field is silently dropped. The stylesheet is rendered by the panel
+    // component instead (see the `<style>` node in the render tree).
+    return { inject: ['slots', 'locale'], apply }
   }
 })
