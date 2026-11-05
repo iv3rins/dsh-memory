@@ -1186,9 +1186,15 @@ function CompactionsPage(props) {
 /** Router trace: only what the backend actually recorded. */
 function RouterTracePage(props) {
   const { data, t } = props
-  const metrics = data.semantic?.metrics
+  // `semantic` is absent — not null — when the backend could not resolve a project root,
+  // because buildPanelStatus returns early in that case. Guarding only against `null`
+  // therefore let `undefined` through and `metrics.routerCalls` threw, which blanked the
+  // whole panel on the trace tab. Both absences mean the same thing here: nothing recorded.
+  const metrics = data.semantic?.metrics ?? null
+  const tiers = data.semantic?.tiers ?? null
   const notCollected = h('span', { className: 'pm-muted' }, t('trace.notCollected'))
   const router = data.router ?? {}
+  const recentCount = Array.isArray(data.compactions?.recent) ? data.compactions.recent.length : 0
 
   // The readiness line from the old panel, kept because it is the answer to "why is
   // nothing being routed": a filled-in model with no subagent provider looks identical
@@ -1199,6 +1205,15 @@ function RouterTracePage(props) {
       : router.provider === '' || router.model === ''
         ? t('router.status.unconfigured')
         : null
+
+  // Every number below is read defensively. A metric the backend has not computed arrives
+  // as null, and one it never computed arrives as undefined; both must render as "not
+  // collected" rather than as a TypeError.
+  const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+  const count = (value) => {
+    const parsed = num(value)
+    return parsed === null ? notCollected : String(parsed)
+  }
 
   // The backend records aggregate counters, not per-run traces. Saying so is the honest
   // rendering: inventing a plausible task intent for each row would be fabrication.
@@ -1213,27 +1228,36 @@ function RouterTracePage(props) {
       { className: 'pm-card' },
       h('div', { className: 'pm-card-title' }, t('trace.title')),
       metrics === null
-        ? h('div', { className: 'pm-empty' }, t('trace.none'))
+        ? h(
+            'div',
+            null,
+            h('div', { className: 'pm-empty' }, t('trace.none')),
+            // Say *why* it is empty, so "no runs yet" and "no project resolved" are
+            // distinguishable instead of both looking like a broken tab.
+            data.semantic === undefined
+              ? h('div', { className: 'pm-hint' }, data.atoms?.readable === false ? String(data.atoms.reason) : t('page.noProject'))
+              : null,
+          )
         : h(
             'div',
             null,
             h(Field, { label: t('trace.intent') }, t('trace.intentNone')),
-            h(Field, { label: t('trace.candidates') }, metrics.retrievalsAtomsMean === null ? notCollected : `\u2248${metrics.retrievalsAtomsMean}`),
-            h(Field, { label: t('trace.routerOk') }, `${metrics.routerCalls} (${metrics.routerFailures} failed)`),
-            h(Field, { label: t('trace.categories') }, metrics.categoryHitRate === null ? notCollected : `${Math.round(metrics.categoryHitRate * 100)}% hit`),
-            h(Field, { label: t('trace.hot') }, data.semantic?.tiers === null || data.semantic?.tiers === undefined ? notCollected : `${data.semantic.tiers.HOT} hot`),
-            h(Field, { label: t('trace.cold') }, data.semantic?.tiers === null || data.semantic?.tiers === undefined ? notCollected : `${data.semantic.tiers.COLD} cold`),
-            h(Field, { label: t('trace.packageTokens') }, metrics.deliveredTokensMean === null ? notCollected : `\u2248${metrics.deliveredTokensMean}`),
-            h(Field, { label: t('trace.delivery') }, metrics.deliveries === 0 ? t('trace.notDelivered') : `${metrics.deliveries} \u00d7 ${t('trace.delivered')}`),
-            h(Field, { label: t('trace.latency') }, metrics.routerLatencyMsMean === null ? notCollected : `${metrics.routerLatencyMsMean}ms (p50 ${metrics.routerLatencyMsP50 ?? '—'})`),
-            h(Field, { label: t('trace.error') }, metrics.routerFailures === 0 ? '—' : `${metrics.routerFailures}`),
+            h(Field, { label: t('trace.candidates') }, num(metrics.retrievalsAtomsMean) === null ? notCollected : `\u2248${metrics.retrievalsAtomsMean}`),
+            h(Field, { label: t('trace.routerOk') }, `${count(metrics.routerCalls)}${num(metrics.routerFailures) === null ? '' : ` (${metrics.routerFailures} failed)`}`),
+            h(Field, { label: t('trace.categories') }, num(metrics.categoryHitRate) === null ? notCollected : `${Math.round(metrics.categoryHitRate * 100)}% hit`),
+            h(Field, { label: t('trace.hot') }, tiers === null ? notCollected : `${tiers.HOT ?? 0} hot`),
+            h(Field, { label: t('trace.cold') }, tiers === null ? notCollected : `${tiers.COLD ?? 0} cold`),
+            h(Field, { label: t('trace.packageTokens') }, num(metrics.deliveredTokensMean) === null ? notCollected : `\u2248${metrics.deliveredTokensMean}`),
+            h(Field, { label: t('trace.delivery') }, num(metrics.deliveries) === null ? notCollected : metrics.deliveries === 0 ? t('trace.notDelivered') : `${metrics.deliveries} \u00d7 ${t('trace.delivered')}`),
+            h(Field, { label: t('trace.latency') }, num(metrics.routerLatencyMsMean) === null ? notCollected : `${metrics.routerLatencyMsMean}ms (p50 ${num(metrics.routerLatencyMsP50) ?? '—'})`),
+            h(Field, { label: t('trace.error') }, num(metrics.routerFailures) === null || metrics.routerFailures === 0 ? '—' : `${metrics.routerFailures}`),
           ),
     ),
     h(
       'div',
       { className: 'pm-card' },
       h('div', { className: 'pm-card-title' }, t('compactions.title')),
-      h('div', { className: 'pm-hint' }, `${(data.compactions?.recent ?? []).length} ${t('tab.compactions')}`),
+      h('div', { className: 'pm-hint' }, `${recentCount} ${t('tab.compactions')}`),
     ),
   )
 }
@@ -1491,11 +1515,13 @@ function MemoryDashboard(props) {
   const toolbar = h(
     'div',
     { className: 'pm-toolbar' },
-    // The host passes `close` for a main panel. Falling back to nothing (rather than to
-    // history.back) is deliberate: history.back in an Electron shell can leave the app.
-    props.close === undefined
-      ? null
-      : h('button', { className: 'pm-tbtn', onClick: () => props.close(), title: t('nav.back') }, `\u2190 ${t('nav.back')}`),
+    // Back returns to the Conversation through the host's layout service. `props.close`
+    // does not exist — the host renders this slot with an empty props object — so the
+    // handler arrives through `inject` instead. Rendering nothing when the layout service
+    // is absent is deliberate: a dead button is worse than none.
+    typeof props.onBack === 'function'
+      ? h('button', { className: 'pm-tbtn', onClick: () => props.onBack(), title: t('nav.back') }, `\u2190 ${t('nav.back')}`)
+      : null,
     h(
       'div',
       { className: 'pm-toolbar-main' },
@@ -1637,6 +1663,30 @@ function MemoryDashboard(props) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'project-memory: dictionaries')
       const t = ctx.locale.bind(NS)
 
+      /**
+       * Navigate back to the Conversation.
+       *
+       * The host renders the `main` slot as `renderSlot('main', {}, …)` — the props object
+       * is literally empty, so there is no `close` callback to call. The documented way
+       * out is the layout service: `selectPanel(null)` means "show the Conversation", and
+       * it throws only for a key that is not registered, which `null` never is.
+       *
+       * `ctx.get` is used rather than a hard `inject` because a host without the layout
+       * bundle should still render the panel; only the Back button degrades.
+       */
+      const leavePanel = () => {
+        try {
+          const layout = typeof ctx.get === 'function' ? ctx.get('layout') : undefined
+          if (layout !== null && layout !== undefined && typeof layout.selectPanel === 'function') {
+            layout.selectPanel(null)
+            return true
+          }
+        } catch {
+          // A layout service that throws must not take the panel down with it.
+        }
+        return false
+      }
+
       ctx.slots.inject('sidebar.panellist', () =>
         ctx.slots.register(
           { name: 'sidebar.panellist', id: PANEL_ID, order: 25, locale: NS, label: () => t('panel.open') },
@@ -1645,9 +1695,12 @@ function MemoryDashboard(props) {
       )
 
       ctx.slots.inject('main', () =>
-        // The dashboard receives the slot props untouched: `close` is the host's own way
-        // out of a main panel, and using it keeps Back from reaching for history.
-        ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t }) }, MemoryDashboard)
+        ctx.slots.register(
+          // `onBack` is supplied by the plugin, not by the host: the slot props are empty,
+          // so navigation has to travel through the registered component instead.
+          { name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t, onBack: leavePanel }) },
+          MemoryDashboard
+        )
       )
     }
 

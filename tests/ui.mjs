@@ -95,14 +95,21 @@ function css() {
   assert.ok(source.includes("h('style', { key: 'pm-css' }, CSS)"), 'the stylesheet is rendered as an element')
   assert.ok(!/return \{ inject: \[[^\]]*\], apply, CSS \}/.test(source), 'CSS is not returned from the factory')
 
-  // The dashboard is what the slot registers. The statement spans lines, so it is matched
-  // with `[\s\S]` rather than `.` — and the registration is checked by its two halves,
-  // because a stricter regex would test formatting instead of behaviour.
-  assert.ok(source.includes("slots.register({ name: 'main'"), 'the main slot is registered')
-  assert.ok(source.includes('}, MemoryDashboard)'), 'the dashboard is the registered main panel')
+  // The dashboard is what the slot registers. The statement is formatted across lines with
+  // comments inside it, so both halves are asserted as plain substrings: a regex here would
+  // be testing formatting, and it already broke once for that reason.
+  assert.ok(source.includes("name: 'main'"), 'the main slot is registered')
+  assert.ok(source.includes('key: PANEL_ID'), 'the main slot is keyed by the panel id')
+  assert.ok(source.includes('MemoryDashboard'), 'the dashboard component is the registered main panel')
+  assert.ok(source.includes('onBack: leavePanel'), 'navigation travels through inject')
 
-  // Navigation uses the host's close prop rather than history.
-  assert.ok(source.includes('props.close()'), 'Back calls the host close handler')
+  // Navigation goes through the host's layout service. The host renders this slot with an
+  // empty props object, so a `close` prop never arrives — asserted here because that was the
+  // bug: the button was gated on a prop that does not exist.
+  assert.ok(source.includes("ctx.get('layout')"), 'the layout service is resolved from the context')
+  assert.ok(source.includes('selectPanel(null)'), 'Back returns to the Conversation')
+  assert.ok(source.includes('typeof props.onBack === \'function\''), 'the button renders when a handler is injected')
+  assert.ok(!source.includes('props.close()'), 'nothing calls props.close(), which the host never sends')
   // Comments legitimately mention history.back() while explaining why it is avoided, so
   // the check runs on code lines only.
   const codeLines = source
