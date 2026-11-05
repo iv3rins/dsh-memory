@@ -48,6 +48,7 @@ const plugin = await import('../lib/index.js').catch((error) => {
   throw error
 })
 const memory = await import('../core/memory.js')
+const compactions = await import('../core/compactions.js')
 const { ensureProjectFile } = await import('../core/project.js')
 const { writeState } = await import('../core/state.js')
 
@@ -125,6 +126,21 @@ try {
     'every atom records the compaction it came from',
   )
   assert.match(readFileSync(atomPath, 'utf8'), /c-loop/, 'the provenance is on disk, not only in memory')
+
+  // --- The compaction must also leave an operational record. ---
+  // The atom store proves the write happened; the ledger is what proves *which*
+  // compactions happened, including any that wrote nothing. Without it a silent
+  // compaction is indistinguishable from one that never occurred.
+  const ledger = compactions.readLedger(root)
+  assert.equal(ledger.ok, true, 'the compaction ledger is readable')
+  assert.equal(ledger.entries.length, 1, 'one row per compaction, written through the real event bus')
+  const row = ledger.entries[0]
+  assert.equal(row.compactionId, 'c-loop', 'the row names the compaction')
+  assert.equal(row.turn, 4, 'the turn from compaction/start is carried through')
+  assert.ok(row.atomsAdded >= 3, 'the row records how many atoms landed')
+  assert.equal(row.skipReason, null, 'a productive compaction has no skip reason')
+  assert.equal(typeof row.at, 'string', 'the row is timestamped')
+  assert.match(readFileSync(path.join(root, compactions.COMPACTIONS_FILE), 'utf8'), /c-loop/, 'the row is on disk')
 
   // --- The next step's waterfall must carry the recalled atoms. ---
   // The surface is a real sequence list the dedupe scan reads, so it is modelled
