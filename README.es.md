@@ -2,6 +2,7 @@
 
 **Idiomas:** [English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · Español
 
+
 Conocimiento persistente a nivel de proyecto y memoria del estado de desarrollo para [DeepSeek Harness](https://github.com/deepseek-ai).
 
 Un agente lo olvida todo cuando termina una sesión, cuando se compacta el contexto o cuando cambias de rama. Para un proyecto que sobrevive a decenas de sesiones, eso significa volver a deducir las mismas decisiones, releer los mismos documentos y repetir los mismos errores. Este plugin le da a un proyecto una memoria que vive **en el repositorio en lugar de en una ventana de contexto**.
@@ -57,6 +58,12 @@ Un subagente puede actuar como enrutador cuando la puntuación léxica no basta.
 ---
 
 ## Instalación
+
+Primero clona el repositorio:
+
+```
+git clone https://github.com/iv3rins/dsh-memory.git
+```
 
 Un comando. El host añade la dependencia **y** la entrada del bundle por sí mismo, porque el manifiesto declara `dsh.bundle` — `reconcileProfilePlugins()` promueve cualquier dependencia recién instalada que lo lleve.
 

@@ -5,6 +5,14 @@
   "description": "Project-level persistent knowledge and development-state memory for DeepSeek Harness: a documentation knowledge system (Markdown as source of truth) plus a development state system (task/progress/git/handoff) that survives session restarts, context compaction, and branch switches. Host-only cordis plugin, no dsh source changes.",
   "author": "iverins",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iv3rins/dsh-memory.git"
+  },
+  "homepage": "https://github.com/iv3rins/dsh-memory#readme",
+  "bugs": {
+    "url": "https://github.com/iv3rins/dsh-memory/issues"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",

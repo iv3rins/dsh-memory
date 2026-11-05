@@ -2,6 +2,7 @@
 
 **语言：** [English](./README.md) · 简体中文 · [日本語](./README.ja.md) · [Español](./README.es.md)
 
+
 面向 [DeepSeek Harness](https://github.com/deepseek-ai) 的项目级持久化知识与开发状态记忆插件。
 
 会话结束、上下文被压实、切换分支 —— 这些时刻 agent 会忘掉一切。对于一个跨越几十个会话的项目，代价是反复推导同样的决策、反复阅读同样的文档、反复犯同样的错误。这个插件让项目拥有一份**存在仓库里、而不是存在上下文窗口里**的记忆。
@@ -57,6 +58,12 @@ MIT 协议 · Node 20+ · 纯宿主侧，无客户端部分
 ---
 
 ## 安装
+
+先克隆：
+
+```
+git clone https://github.com/iv3rins/dsh-memory.git
+```
 
 一条命令。宿主机自己会加上依赖**和** bundle 条目，因为清单里声明了 `dsh.bundle` —— `reconcileProfilePlugins()` 会把任何新装、且带有该声明的依赖提升进去。
 
