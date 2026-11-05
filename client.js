@@ -63,6 +63,7 @@ window.__ModuleLoader__.load({
       'panel.open': '打开项目记忆',
       'panel.loading': '正在读取…',
       'panel.retry': '重新读取',
+      'panel.noRoot': '无法确定项目根目录。设置 projectRoot，或在一个会话里打开本面板。',
       'panel.error': '读取失败',
       'panel.empty': '这个项目还没有任何记忆。压实发生时会自动写入，也可以用 memory_remember 主动写入。',
       'atoms.title': '记忆原子',
@@ -100,6 +101,7 @@ window.__ModuleLoader__.load({
       'panel.open': 'Open project memory',
       'panel.loading': 'Reading…',
       'panel.retry': 'Read again',
+      'panel.noRoot': 'No project root could be determined. Set projectRoot, or open this panel from a session.',
       'panel.error': 'Could not read',
       'panel.empty': 'No memory for this project yet. Compaction writes it automatically, and memory_remember writes it on demand.',
       'atoms.title': 'Memory atoms',
@@ -305,7 +307,12 @@ window.__ModuleLoader__.load({
 
       const atomSection =
         atoms === null || atoms.readable !== true
-          ? h('div', { className: 'pm-card' }, h('div', { className: 'pm-card-title' }, t('atoms.title')), h('div', { className: 'pm-muted' }, atoms === null ? '—' : atoms.reason))
+          ? h(
+              'div',
+              { className: 'pm-card' },
+              h('div', { className: 'pm-card-title' }, t('atoms.title')),
+              h('div', { className: 'pm-muted' }, atoms === null ? '—' : atoms.reason === 'no-project-root' ? t('panel.noRoot') : String(atoms.reason))
+            )
           : atoms.live === 0
             ? h('div', { className: 'pm-card' }, h('div', { className: 'pm-card-title' }, t('atoms.title')), h('div', { className: 'pm-muted' }, t('panel.empty')))
             : h(
@@ -499,7 +506,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'pm-title' }, t('panel.title')),
           h('button', { className: 'pm-btn', onClick: () => void load() }, t('panel.retry'))
         ),
-        h('div', { className: 'pm-sub' }, String(data.root)),
+        h('div', { className: 'pm-sub' }, data.root === null ? t('panel.noRoot') : String(data.root)),
         atomSection,
         compactionSection,
         routerSection,

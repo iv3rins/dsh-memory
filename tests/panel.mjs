@@ -271,6 +271,28 @@ try {
     assert.equal(emptied.body.atoms.invalid, 0, 'and nothing invalid, because there was nothing to parse')
   }
 
+  // --- 7. An unknown root is not reported as an empty project. ---
+  //
+  // Live, this decided whether the panel showed 188 atoms or zero: `process.cwd()` in
+  // the host process is the harness install directory, so a naive fallback pointed the
+  // panel at a store that does not exist and rendered "no memory yet" for a project that
+  // had plenty. The panel must never confuse "nothing here" with "I looked in the wrong
+  // place".
+  {
+    const unknown = panelModule.buildPanelStatus({
+      root: null,
+      settings: config.normalizeConfig({}),
+    })
+    assert.equal(unknown.root, null, 'an unknown root is reported as null, not substituted')
+    assert.equal(unknown.atoms.readable, false, 'and the store is reported unreadable')
+    assert.equal(unknown.atoms.reason, 'no-project-root', 'with a reason the panel can name')
+    assert.equal(unknown.compactions.readable, false, 'the ledger is likewise unreadable')
+    // The settings still answer, so the user can still fix the configuration that
+    // caused this.
+    assert.equal(typeof unknown.settings.routerTier, 'string', 'settings are still served')
+    assert.deepEqual(unknown.choices.routerStrategy, [...config.ROUTER_STRATEGIES], 'and so are the choices')
+  }
+
   assert.equal(
     loggerLines.filter((line) => line.startsWith('warn')).length >= 0,
     true,
