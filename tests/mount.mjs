@@ -6,7 +6,7 @@
  * What this proves that unit tests cannot:
  * - `apply` completes against real cordis fiber/effect/inject semantics, including
  *   that touching an unavailable service throws rather than returning undefined.
- * - The `inject = ['tools']` declaration is actually satisfiable, and the 15 tools
+ * - The `inject = ['tools']` declaration is actually satisfiable, and the 18 tools
  *   land in a real `ToolRuntime` where its own schema and output checks apply.
  * - The system-prompt section and slash commands register through their real
  *   registries instead of a stub.
@@ -69,8 +69,8 @@ try {
 
   const schemas = ctx.tools.schemas()
   const ours = schemas.filter((schema) => schema.name.startsWith('memory_') || schema.name.startsWith('state_') || schema.name.startsWith('project_') || schema.name.startsWith('docs_') || schema.name === 'architecture_check')
-  assert.equal(ours.length, 15, `expected 15 registered tools, got ${ours.length}: ${ours.map((s) => s.name).join(', ')}`)
-  assert.equal(schemas.length, toolsBefore + 15, 'the tools were added to the real registry')
+  assert.equal(ours.length, 18, `expected 18 registered tools, got ${ours.length}: ${ours.map((s) => s.name).join(', ')}`)
+  assert.equal(schemas.length, toolsBefore + 18, 'the tools were added to the real registry')
 
   // The registry validates arguments and output on every call; a schema mistake
   // would surface here as INVALID_ARGS or a ToolOutputError, not as silence.

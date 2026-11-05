@@ -80,7 +80,7 @@ async function mountHost() {
 
   const names = ctx.tools.schemas().map((schema) => schema.name)
   const ours = names.filter((n) => n.startsWith('memory_') || n.startsWith('state_') || n.startsWith('project_') || n.startsWith('docs_') || n === 'architecture_check')
-  assert.equal(ours.length, 15, `all 15 tools must register on a host without optional services; got ${ours.length} (${ours.join(', ')})`)
+  assert.equal(ours.length, 18, `all 18 tools must register on a host without optional services; got ${ours.length} (${ours.join(', ')})`)
 
   const status = await ctx.tools.execute({
     name: 'memory_status',
@@ -128,4 +128,4 @@ async function mountHost() {
   await wait()
 }
 
-console.log('DEGRADE OK: the plugin registers all 15 tools and stays functional when optional services are absent')
+console.log('DEGRADE OK: the plugin registers all 18 tools and stays functional when optional services are absent')

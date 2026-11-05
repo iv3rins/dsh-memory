@@ -95,6 +95,46 @@ export const DEFAULTS = Object.freeze({
    * prompt makes both jobs look identical to the model.
    */
   routerStrategy: 'task',
+
+  /*
+   * --- GC-inspired upgrade: semantic categories, lifecycle, task intents ------------
+   *
+   * Every switch below defaults to the **conservative** value, and `semanticRouting`
+   * defaults to `false`. That is the rollback story: setting one boolean back to
+   * `false` restores the pre-upgrade behaviour exactly, because the upgrade is layered
+   * on top of the existing gate → router → inject path rather than replacing it.
+   */
+
+  /** Master switch for category-aware retrieval. Off = the pre-upgrade candidate set. */
+  semanticRouting: false,
+  /** Ask the router which categories matter, in addition to which atoms. */
+  categoryAwareDigest: true,
+  /** Allow the router to answer with a category selection rather than only atom ids. */
+  categorySelection: true,
+  /** Enforce the outside-category reserve so a mis-classification cannot lose memory. */
+  crossCategorySupplement: true,
+
+  /** Master switch for lifecycle management. Off = every atom is injectable, as before. */
+  lifecycleEnabled: false,
+  /**
+   * Apply lifecycle changes automatically after a recall.
+   *
+   * Off by default, and deliberately so: promotion writes to disk, and a subsystem that
+   * changes stored state on every step should be opted into rather than discovered.
+   */
+  lifecycleAutoSweep: false,
+  /** Never cool an atom whose tier was set by hand. */
+  lifecycleRespectPinned: true,
+
+  /** Master switch for the task-intent protocol. Off = only the text-derived query. */
+  taskIntentEnabled: false,
+  /** Reuse a retrieval decision for the same intent while the store is unchanged. */
+  intentCacheEnabled: true,
+  /** How long a cached intent decision stays usable, in milliseconds. */
+  intentCacheTtlMs: 300000,
+
+  /** Record metrics events. Off = no telemetry file is written at all. */
+  metricsEnabled: true,
 })
 
 /** Accept only a finite number inside an inclusive range. */
@@ -169,6 +209,19 @@ export function normalizeConfig(raw) {
     routerCooldownSteps: number(input.routerCooldownSteps, DEFAULTS.routerCooldownSteps, 1, 50),
     routerDigestBudget: number(input.routerDigestBudget, DEFAULTS.routerDigestBudget, 200, 8000),
     routerStrategy: choice(input.routerStrategy, DEFAULTS.routerStrategy, ROUTER_STRATEGIES),
+
+    // --- GC-inspired upgrade switches -------------------------------------------
+    semanticRouting: bool(input.semanticRouting, DEFAULTS.semanticRouting),
+    categoryAwareDigest: bool(input.categoryAwareDigest, DEFAULTS.categoryAwareDigest),
+    categorySelection: bool(input.categorySelection, DEFAULTS.categorySelection),
+    crossCategorySupplement: bool(input.crossCategorySupplement, DEFAULTS.crossCategorySupplement),
+    lifecycleEnabled: bool(input.lifecycleEnabled, DEFAULTS.lifecycleEnabled),
+    lifecycleAutoSweep: bool(input.lifecycleAutoSweep, DEFAULTS.lifecycleAutoSweep),
+    lifecycleRespectPinned: bool(input.lifecycleRespectPinned, DEFAULTS.lifecycleRespectPinned),
+    taskIntentEnabled: bool(input.taskIntentEnabled, DEFAULTS.taskIntentEnabled),
+    intentCacheEnabled: bool(input.intentCacheEnabled, DEFAULTS.intentCacheEnabled),
+    intentCacheTtlMs: number(input.intentCacheTtlMs, DEFAULTS.intentCacheTtlMs, 1000, 86400000),
+    metricsEnabled: bool(input.metricsEnabled, DEFAULTS.metricsEnabled),
   }
   if (typeof input.projectRoot === 'string' && input.projectRoot.trim() !== '') {
     settings.projectRoot = input.projectRoot

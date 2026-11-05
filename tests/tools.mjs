@@ -126,7 +126,12 @@ try {
   }
 
   const tools = buildTools({ settings, resolveContext, sessionIdOf: () => 'test-session' })
-  assert.equal(tools.length, 15, `expected 15 tools, got ${tools.length}`)
+  // The GC-inspired upgrade adds three tools: an intent-driven request the main model can
+  // make proactively, a lifecycle/debug surface, and a metrics report.
+  assert.equal(tools.length, 18, `expected 18 tools, got ${tools.length}`)
+  for (const name of ['memory_intent', 'memory_lifecycle', 'memory_metrics']) {
+    assert.ok(tools.some((tool) => tool.name === name), `${name} is registered`)
+  }
 
   const seen = new Set()
   for (const tool of tools) {

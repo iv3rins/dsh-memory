@@ -57,7 +57,7 @@ const writes = []
 
 /** A stand-in for the Host's config editor: same shape, no Loader. */
 const fakeEditor = {
-  entries: () => [{ id: 'project-memory', name: '@dsh-external/dsh-project-memory', config: { ...liveConfig } }],
+  entries: () => [{ options: { id: 'project-memory', name: '@dsh-external/dsh-project-memory', config: { ...liveConfig } } }],
   edit: async (entry, updater) => {
     const next = updater({ ...liveConfig })
     writes.push(next)
@@ -170,6 +170,28 @@ try {
     assert.equal(second.body.compactions.skipped, 1, 'and silent ones are counted')
     assert.equal(second.body.compactions.byReason[compactions.SKIP_REASONS.EMPTY_SUMMARY], 1, 'the reason is grouped')
     assert.equal(second.body.atoms.live, memory.readAtoms(root).live.length, 'the panel and the store agree')
+
+    // The timeline is what the panel leads with, so its shape is part of the contract:
+    // newest first, one row per compaction, each carrying its own verdict.
+    assert.deepEqual(
+      second.body.compactions.recent.map((row) => row.compactionId),
+      ['panel-2', 'panel-1'],
+      'the timeline is newest first',
+    )
+    assert.equal(second.body.compactions.recent[0].added, 0, 'a silent compaction reports zero atoms written')
+    assert.equal(
+      second.body.compactions.recent[0].skipReason,
+      compactions.SKIP_REASONS.EMPTY_SUMMARY,
+      'and names its reason, so the row is not a bare zero',
+    )
+    assert.equal(second.body.compactions.recent[1].added, 2, 'a productive compaction reports what it wrote')
+    assert.equal(second.body.compactions.recent[1].turn, 1, 'the row carries the turn it happened on')
+    assert.equal(second.body.compactions.recent[1].at, '2026-01-05T00:00:00.000Z', 'and its timestamp')
+
+    // The ceiling is disclosed, not inferred. A user watching `live` sit still has to be
+    // able to tell "nothing new" from "the store is full".
+    assert.equal(typeof second.body.atoms.limit, 'number', 'the live-atom ceiling is reported')
+    assert.equal(second.body.atoms.atLimit, false, 'and a store below the ceiling says so')
   }
 
   // --- 3. Configuration round-trips, and only through the editor. ---
