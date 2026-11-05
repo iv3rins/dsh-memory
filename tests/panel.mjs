@@ -293,6 +293,47 @@ try {
     assert.deepEqual(unknown.choices.routerStrategy, [...config.ROUTER_STRATEGIES], 'and so are the choices')
   }
 
+  // --- 8. A throwing root resolver must not take the endpoint down silently. ---
+  //
+  // Live, this returned HTTP 500 with an *empty* body: `resolveRoot` read
+  // `workingDirectory`, a service the plugin never injected, and cordis throws for that
+  // rather than returning undefined — so optional chaining never helped. Every test
+  // passed while it was broken, because the tests supplied the root themselves and never
+  // exercised the resolver. The contract asserted here is the one that made it findable:
+  // a failure must carry a body naming the cause.
+  {
+    const throwingRoutes = new Map()
+    panelModule.registerPanelRoutes({
+      ctx: {
+        effect: (fn) => { fn(); return () => {} },
+        webServer: { register: (route) => { throwingRoutes.set(route.path, route); return () => {} } },
+        configEditor: fakeEditor,
+      },
+      logger,
+      readSettings: () => ({ ...config.normalizeConfig(liveConfig) }),
+      applySetting: async () => {},
+      resolveRoot: () => {
+        // Exactly what cordis does when a plugin touches a service it did not inject.
+        throw new Error('cannot get property "workingDirectory" without inject')
+      },
+    })
+
+    const answer = await new Promise((resolve) => {
+      let code = null
+      const fakeRes = {
+        writeHead: (status) => { code = status },
+        end: (text) => { resolve({ code, body: text ?? '' }) },
+      }
+      throwingRoutes.get(panelModule.STATUS_PATH).handler(
+        { method: 'GET', socket: { remoteAddress: '127.0.0.1' }, url: panelModule.STATUS_PATH },
+        fakeRes,
+      )
+    })
+    assert.equal(answer.code, 500, 'a failing resolver is reported as a failure')
+    assert.notEqual(answer.body, '', 'the failure carries a body the panel can display')
+    assert.match(String(JSON.parse(answer.body).error), /workingDirectory/, 'and the body names the cause')
+  }
+
   assert.equal(
     loggerLines.filter((line) => line.startsWith('warn')).length >= 0,
     true,
