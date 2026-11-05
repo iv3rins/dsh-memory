@@ -152,18 +152,21 @@ Fifteen tools. `memory_status` is the one to call first in any unfamiliar sessio
 
 ### Sidebar panel
 
-The plugin adds one entry to the left sidebar — **project memory** — which opens a panel showing:
+The plugin adds one entry to the left sidebar — **project memory** — which opens a panel. It leads with the question people actually open it to ask: **did compacting my conversation keep the memory?**
 
-- live and forgotten atom counts, **how many are standing hard rules**, and the breakdown by kind and by weight;
-- the compaction ledger: how many compactions were observed, how many produced atoms, and why the rest produced nothing;
-- the current recall budget and limits;
-- the router controls: **when** to route (`off` / `smart` / `always`), **what to prioritise** (`task` / `compliance` / `orient`), and the provider/model.
+- **the last compaction, in one sentence** — how many atoms it wrote and when, or the reason it wrote none. A last compaction older than a day says so, because a plugin that quietly stopped working looks exactly like one that is idle;
+- **a timeline of recent compactions**, newest first, one row each: atoms written (or the skip reason), the turn, and the size of the summary it read. Silent compactions are dimmed rather than hidden — "the last five wrote nothing" is precisely the signal this panel must not suppress;
+- live and forgotten atom counts, **how many are standing hard rules**, the breakdown by kind and by weight, and — when the store is at its ceiling — a warning that new atoms are displacing old ones rather than accumulating;
+- the project picker and the Global / This project switch;
+- collapsed by default: the router controls — **when** to route (`off` / `smart` / `always`), **what to prioritise** (`task` / `compliance` / `orient`), and the provider/model. The collapsed row still shows the current tier and strategy, so the setting is never hidden, only its controls. Routing is a tuning knob, not the point of the panel, and it no longer occupies the first screen.
 
 The strategy is not decoration: each value sends a different instruction set to the router model, so the same atoms are weighed differently. `compliance` asks the router to hold rules that govern the files in play even when their wording looks unrelated to the request; `task` asks it to prefer what this step is about to do; `orient` asks it to prefer how the subsystem works, for requests that want to understand rather than act.
 
 Saving goes through the host's `configEditor`, so a change takes effect the same way any other config change does — no hand-edited YAML that only applies after a restart and disagrees with the running config in the meantime. If a profile does not expose `configEditor`, the panel says so instead of reporting a save that did not happen.
 
 The panel has no controls that change memory. Atoms are written by compaction and by tools that carry provenance and honour tombstones; a browser button that deleted one would bypass both, so removal stays `memory_forget`.
+
+The panel finds its project without a running session. The profile setting wins, then the most recently served project, then the host's working directory. The recency record is a small file under the harness home (`$DSH_HOME`, or `~/.dsh`) — the one place that outlives a restart, since it is the index of the `.dsh-memory` directories rather than a copy of one. Without it, a freshly started host answered "no project root" while the project it should have read was on disk with a full atom store, which is indistinguishable from lost memory.
 
 Its two endpoints are loopback-only. They reveal project memory and can change how routing behaves, so a request from another host is refused rather than served.
 
@@ -234,7 +237,8 @@ npm run test:host    # fifteen host-level checks against the real harness
 | `patch.mjs` | `cordis.patch.yml` resolves through the host's own `bundlePatchPaths` and inserts a loadable plugin. |
 | `mount.mjs` | The plugin mounts into a real cordis context with the real `ToolRuntime`, and disposes. |
 | `loop.mjs` | The closed loop: a compaction event writes atoms through the real event bus, the next step recalls them sparsely, a replay is idempotent, a repeat is not re-injected, and a forget is honoured. |
-| `panel.mjs` | The sidebar's endpoints over real HTTP: they report the same store and ledger the tools read, write settings only through the host's `configEditor`, reject a value outside the accepted set, refuse a non-loopback peer, and disclose a corrupt line instead of reporting an empty store. |
+| `panel.mjs` | The sidebar's endpoints over real HTTP: they report the same store and ledger the tools read, the compaction timeline is newest-first with a per-row verdict, write settings only through the host's `configEditor`, reject a value outside the accepted set, refuse a non-loopback peer, and disclose a corrupt line instead of reporting an empty store. |
+| `recent.mjs` | The recency record that makes the panel work after a restart: it honours `$DSH_HOME`, survives a fresh read, stays ordered, de-duplicated and capped, performs no write when the root is already current, and turns a corrupt or unwritable file into "no history" rather than an exception. |
 | `projects.mjs` | Per-project settings: one directory has one key whatever the spelling, the merge returns a copy rather than writing through the profile, an override applies to its own project only, removing the last key deletes the file, a non-overridable key is refused, a corrupt file is reported instead of read as empty, the project list is de-duplicated, and the panel refuses to honour a project path it does not know. |
 | `client.mjs` | The Client half: one sidebar entry and one *matching* main panel, every string present in both languages with the same placeholders, and routes and choices identical to the host's. |
 
@@ -325,6 +329,7 @@ lib/           the cordis layer
   recall.js    one step's recall   router.js    router prompt and parsing
   delegate.js  subagent activation
   panel.js     the sidebar panel's two loopback routes
+  recent-projects.js  the cross-restart record of which project was last served
   settings-write.js  persisting a panel change through configEditor
 client.js      the sidebar panel (Client half, loaded by the web shell)
 tests/unit/    pure-core tests (node --test)
