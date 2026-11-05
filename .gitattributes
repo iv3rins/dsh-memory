@@ -1,0 +1,21 @@
+# Normalize line endings so a Windows checkout and a Linux CI checkout produce
+# the same diff. `core.autocrlf` alone cannot do this: without a rule here, git
+# warns on every file and a contributor's editor setting decides what lands.
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF or cmd.exe misparses them.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets git should never try to diff or merge.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.asar binary
