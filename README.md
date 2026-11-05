@@ -24,8 +24,11 @@ MIT licensed · Node 20+ · host-only plugin + one sidebar panel
 - [Storage layout](#storage-layout)
 - [Verifying](#verifying)
 - [Configuration](#configuration)
+- [Per-project settings](#per-project-settings)
+- [Project layout](#project-layout)
 - [Known limitations](#known-limitations)
 - [License](#license)
+
 ---
 
 ## Three systems, on purpose
@@ -191,6 +194,8 @@ Everything lives under `.dsh-memory/` in the project root. Commit it or ignore i
     .lock               short-lived write lock
   index.json            derived cache — safe to delete, rebuilt on demand
   arch.json             optional architecture rules
+  settings/
+    <project-key>.json  per-project overrides — present only for projects that have one
 ```
 
 `atoms.jsonl` is append-only and content-addressed: an atom's id is a hash of its kind and normalized text, so seeing the same statement twice reinforces one record instead of appending a copy. `memory_forget` writes a tombstone rather than deleting the line — the record stays as evidence, and the tombstone is sticky so a later extraction pass cannot bring it back.
@@ -208,7 +213,7 @@ Everything lives under `.dsh-memory/` in the project root. Commit it or ignore i
 ```powershell
 npm run setup        # extract host packages from the installed app.asar and link them
 npm test             # 14 unit tests for the pure core/ layer (no DSH needed)
-npm run test:host    # fourteen host-level checks against the real harness
+npm run test:host    # fifteen host-level checks against the real harness
 ```
 
 `npm run setup` is the one-time (and idempotent) prerequisite for `test:host`. It reads the packages out of the installed Desktop payload rather than `npm install`, so the tests run against the exact host this plugin will load into.
@@ -230,6 +235,7 @@ npm run test:host    # fourteen host-level checks against the real harness
 | `mount.mjs` | The plugin mounts into a real cordis context with the real `ToolRuntime`, and disposes. |
 | `loop.mjs` | The closed loop: a compaction event writes atoms through the real event bus, the next step recalls them sparsely, a replay is idempotent, a repeat is not re-injected, and a forget is honoured. |
 | `panel.mjs` | The sidebar's endpoints over real HTTP: they report the same store and ledger the tools read, write settings only through the host's `configEditor`, reject a value outside the accepted set, refuse a non-loopback peer, and disclose a corrupt line instead of reporting an empty store. |
+| `projects.mjs` | Per-project settings: one directory has one key whatever the spelling, the merge returns a copy rather than writing through the profile, an override applies to its own project only, removing the last key deletes the file, a non-overridable key is refused, a corrupt file is reported instead of read as empty, the project list is de-duplicated, and the panel refuses to honour a project path it does not know. |
 | `client.mjs` | The Client half: one sidebar entry and one *matching* main panel, every string present in both languages with the same placeholders, and routes and choices identical to the host's. |
 
 `npm test` covers path containment, front-matter parsing, index derivation, search ranking, guard framing, budget fitting, architecture checking, atomic writes, locking, state merging, and the whole atom layer (identity, tombstones, the sparse gate, route tiers, extraction, the router, recall, and the compaction observer).
@@ -272,6 +278,35 @@ Every field has a working default. Invalid values are repaired, not fatal — a 
 
 ---
 
+## Per-project settings
+
+A profile is one configuration for every repository. That is wrong for at least one setting: the router model that suits a large TypeScript monorepo is not the one you want reviewing recall in a small notes repository, and paying for a router on one project while keeping it free on another is a per-project decision, not a global one.
+
+So six fields can be overridden per project:
+
+`routerTier`, `routerStrategy`, `routerProvider`, `routerModel`, `recallBudget`, `recallLimit`
+
+Everything else stays global on purpose. Paths, budgets for the baseline, extraction switches, and protected paths describe the installation, not a repository; making them per-project would mean a project could change what the plugin is allowed to write.
+
+**How it works.** An override is one small file inside the project:
+
+```
+<project>/.dsh-memory/settings/<project-key>.json
+{ "schema": 1, "root": "<absolute project root>", "values": { "routerModel": "deepseek-reasoner" } }
+```
+
+The key is the absolute path with separators and the drive colon folded into dashes, so `D:\x\proj` and `D:/x/proj/` are the same project on a case-insensitive host. A step resolves `effectiveSettings(profile, root)` once, and everything downstream — the router's model, tier, strategy, the recall budget — uses the merged values. Nothing else in the plugin knows a second layer exists.
+
+**Three rules that matter:**
+
+- A value equal to the global value is still stored as an override. "This project uses `task` even after the profile moves to `compliance`" is a real decision, and silently dropping it would make the project follow the next global edit.
+- Removing an override is explicit. Setting the value to `null` deletes it and restores inheritance; the file disappears when its last key goes. An empty file is never left behind, because it would read as a decision nobody made.
+- A corrupt settings file is reported, never guessed at. The profile values still apply — one bad file must not take a project's memory offline — and the panel shows the reason.
+
+**In the panel.** The sidebar panel has a project picker, a Global / This project switch, and a marker on every field that is overridden. Nothing is written until you press Save, and the layer you are editing is stated next to the controls rather than only in the picker.
+
+---
+
 ## Project layout
 
 ```
@@ -280,6 +315,7 @@ core/          pure Node, no DSH import — the testable heart
   gate.js      sparse mixture-of-experts selection and route decision
   extract.js   deterministic extraction from summaries and user rules
   state.js     state document, compare-and-set, journal
+  projects.js  project registry, per-project settings, effective merge
   indexer.js   document index      search.js    lexical ranking
   context.js   token budgets       guard.js     data-not-instructions framing
 lib/           the cordis layer

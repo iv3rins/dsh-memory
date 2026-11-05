@@ -24,6 +24,8 @@ Licencia MIT · Node 20+ · plugin de host + un panel lateral
 - [Estructura de almacenamiento](#estructura-de-almacenamiento)
 - [Verificación](#verificación)
 - [Configuración](#configuración)
+- [Ajustes por proyecto](#ajustes-por-proyecto)
+- [Estructura del proyecto](#estructura del proyecto)
 - [Limitaciones conocidas](#limitaciones-conocidas)
 - [Licencia](#licencia)
 
@@ -193,6 +195,8 @@ Todo vive bajo `.dsh-memory/` en la raíz del proyecto. Confirmarlo o ignorarlo:
     .lock               bloqueo de escritura de corta duración
   index.json            caché derivada — seguro de borrar, se reconstruye bajo demanda
   arch.json             reglas de arquitectura opcionales
+  settings/
+    <project-key>.json  sobrescrituras por proyecto — solo existe para proyectos que tienen una
 ```
 
 `atoms.jsonl` es de solo-añadir y direccionado por contenido: el id de un átomo es un hash de su tipo y su texto normalizado, así que ver la misma afirmación dos veces refuerza un registro en lugar de añadir una copia. `memory_forget` escribe una lápida en lugar de borrar la línea: el registro queda como evidencia, y la lápida es pegajosa para que una pasada de extracción posterior no pueda traerlo de vuelta.
@@ -210,7 +214,7 @@ Todo vive bajo `.dsh-memory/` en la raíz del proyecto. Confirmarlo o ignorarlo:
 ```powershell
 npm run setup        # extrae del app.asar instalado los paquetes del host y los enlaza
 npm test             # 14 pruebas unitarias de la capa core/ pura (sin DSH)
-npm run test:host    # catorce comprobaciones a nivel de host contra el harness real
+npm run test:host    # quince comprobaciones a nivel de host contra el harness real
 ```
 
 `npm run setup` es el requisito previo, de una sola vez (e idempotente), para `test:host`. Lee los paquetes del payload de escritorio instalado en lugar de usar `npm install`, así que las pruebas se ejecutan contra el host exacto en el que este plugin se cargará.
@@ -274,6 +278,35 @@ Cada campo tiene un valor por defecto funcional. Los valores inválidos se repar
 
 ---
 
+## Ajustes por proyecto
+
+Un perfil es una sola configuración para todos los repositorios. Eso está mal para al menos un ajuste: el modelo de enrutador que sirve a un monorepo grande de TypeScript no es el que quieres revisando el recuerdo en un repositorio de notas, y pagar por un enrutador en un proyecto mientras se mantiene gratis en otro es una decisión por proyecto, no global.
+
+Por eso seis campos se pueden sobrescribir por proyecto:
+
+`routerTier`, `routerStrategy`, `routerProvider`, `routerModel`, `recallBudget`, `recallLimit`
+
+Todo lo demás sigue siendo global a propósito. Las rutas, los presupuestos de la línea base, los interruptores de extracción y las rutas protegidas describen la instalación, no un repositorio; hacerlos por proyecto permitiría que un proyecto cambiara qué puede escribir el plugin.
+
+**Cómo se guarda.** Una sobrescritura es un archivo pequeño dentro del proyecto:
+
+```
+<project>/.dsh-memory/settings/<project-key>.json
+{ "schema": 1, "root": "<absolute project root>", "values": { "routerModel": "deepseek-reasoner" } }
+```
+
+La clave es la ruta absoluta con los separadores y el dos puntos de la unidad convertidos en guiones, así que en un host insensible a mayúsculas `D:\x\proj` y `D:/x/proj/` son el mismo proyecto. Cada paso resuelve `effectiveSettings(profile, root)` una vez, y todo lo que viene después —el modelo del enrutador, el nivel, la estrategia, el presupuesto de recuerdo— usa los valores combinados. Ningún otro lugar del plugin sabe que existe una segunda capa.
+
+**Tres reglas que importan:**
+
+- Un valor igual al global se guarda igualmente como sobrescritura. «Este proyecto usa `task` aunque el perfil pase a `compliance`» es una decisión real, y descartarla en silencio haría que el proyecto siguiera la siguiente edición global.
+- Quitar una sobrescritura es explícito. Poner el valor en `null` la borra y restaura la herencia; el archivo desaparece cuando se va su última clave. Nunca se deja un archivo vacío, porque se leería como una decisión que nadie tomó.
+- Un archivo de ajustes corrupto se reporta, nunca se adivina. Los valores del perfil se siguen aplicando —un archivo malo no debe dejar sin memoria a un proyecto— y el panel muestra el motivo.
+
+**En el panel.** El panel lateral tiene un selector de proyecto, un interruptor Global / Este proyecto, y una marca en cada campo sobrescrito. No se escribe nada hasta pulsar Guardar, y la capa que estás editando aparece junto a los controles, no solo en el selector.
+
+---
+
 ## Estructura del proyecto
 
 ```
@@ -282,6 +315,7 @@ core/          Node puro, sin importar DSH — el corazón comprobable
   gate.js      selección dispersa de mezcla de expertos y decisión de ruta
   extract.js   extracción determinista de resúmenes y reglas de usuario
   state.js     documento de estado, comparar-y-establecer, diario
+  projects.js  registro de proyectos, ajustes por proyecto, combinación efectiva
   indexer.js   índice de documentos   search.js   ordenación léxica
   context.js   presupuestos de tokens   guard.js   marco de datos-no-instrucciones
 lib/           la capa cordis

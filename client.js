@@ -93,7 +93,25 @@ window.__ModuleLoader__.load({
       'router.readonly': '这个 profile 不支持保存设置。',
       'router.notConfigured': '未配置副模型，当前只做确定性选择。',
       'recall.title': '召回预算',
-      'recall.line': '每次最多 {budget} tokens、{limit} 条'
+      'recall.line': '每次最多 {budget} tokens、{limit} 条',
+      'project.title': '项目',
+      'project.select': '查看哪个项目',
+      'project.current': '当前会话',
+      'project.unknown': '这个路径不是已登记的项目，无法显示。回到列表里选一个。',
+      'project.none': '还没有登记任何项目。在某个项目里开始一次会话后，它就会出现在这里。',
+      'project.atoms': '{count} 条原子',
+      'project.noMemory': '尚未建立记忆',
+      'scope.title': '设置作用范围',
+      'scope.global': '全局（所有项目）',
+      'scope.project': '仅本项目',
+      'scope.global.hint': '改动写进 profile 配置，对所有项目生效。',
+      'scope.project.hint': '改动只写进这个项目的 .dsh-memory，其他项目不受影响。',
+      'scope.project.unavailable': '没有选中项目，无法设置项目级配置。',
+      'scope.overridden': '这些设置由本项目覆盖：',
+      'scope.inherit': '跟随全局',
+      'scope.reset': '恢复跟随全局',
+      'router.overrideOn': '本项目已覆盖',
+      'router.empty': '留空表示跟随全局（{value}）。'
     }
 
     const en = {
@@ -131,7 +149,25 @@ window.__ModuleLoader__.load({
       'router.readonly': 'This profile cannot persist settings.',
       'router.notConfigured': 'No router model configured, so only deterministic selection runs.',
       'recall.title': 'Recall budget',
-      'recall.line': 'At most {budget} tokens and {limit} atoms per step'
+      'recall.line': 'At most {budget} tokens and {limit} atoms per step',
+      'project.title': 'Project',
+      'project.select': 'Which project to show',
+      'project.current': 'current session',
+      'project.unknown': 'That path is not a registered project, so there is nothing to show. Pick one from the list.',
+      'project.none': 'No project registered yet. Start a session inside one and it appears here.',
+      'project.atoms': '{count} atoms',
+      'project.noMemory': 'no memory yet',
+      'scope.title': 'Where changes apply',
+      'scope.global': 'Global (every project)',
+      'scope.project': 'This project only',
+      'scope.global.hint': 'Writes to the profile config, so every project follows it.',
+      'scope.project.hint': 'Writes into this project\u2019s .dsh-memory; other projects are untouched.',
+      'scope.project.unavailable': 'No project selected, so nothing can be set per project.',
+      'scope.overridden': 'This project overrides:',
+      'scope.inherit': 'Follow global',
+      'scope.reset': 'Stop overriding',
+      'router.overrideOn': 'Overridden here',
+      'router.empty': 'Leave empty to follow global ({value}).'
     }
 
     // --------------------------------------------------------------------- icon
@@ -199,9 +235,58 @@ window.__ModuleLoader__.load({
 .pm-banner.bad { border: 1px solid var(--dsh-danger, rgba(220,90,90,0.5)); }
 .pm-field { display: flex; flex-direction: column; gap: 4px; }
 .pm-label { font-size: 11.5px; font-weight: 600; opacity: 0.72; }
+.pm-btn.small { font-size: 11.5px; padding: 4px 10px; }
+.pm-chip.own { background: var(--dsh-accent, rgba(90,140,255,0.18)); font-weight: 600; }
+.pm-scope { display: flex; gap: 8px; flex-wrap: wrap; }
+.pm-scope-item { flex: 1 1 190px; display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+.pm-scope-item:hover { background: var(--dsh-surface, rgba(127,127,127,0.09)); }
+.pm-scope-item.on { border-color: var(--dsh-accent, rgba(90,140,255,0.55)); background: var(--dsh-surface, rgba(127,127,127,0.09)); }
+.pm-scope-item.dim { opacity: 0.45; cursor: default; }
+.pm-projects { display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow-y: auto; }
+.pm-project { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+.pm-project:hover { background: var(--dsh-surface, rgba(127,127,127,0.09)); }
+.pm-project.on { border-color: var(--dsh-accent, rgba(90,140,255,0.55)); background: var(--dsh-surface, rgba(127,127,127,0.09)); }
+.pm-project-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pm-project-name { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.pm-project-path { font-size: 10.5px; opacity: 0.5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-project-meta { font-size: 11px; opacity: 0.62; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pm-tag { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--dsh-accent, rgba(90,140,255,0.18)); font-weight: 600; }
 `
 
     // -------------------------------------------------------------------- panel
+
+    /**
+     * One row in the project picker.
+     * @param {{ row: object, selected: boolean, onPick: () => void, t: Function }} props - row data.
+     */
+    function ProjectRow(props) {
+      const { row, selected, onPick, t } = props
+      const meta = row.hasMemory === false ? t('project.noMemory') : fill(t('project.atoms'), { count: row.atoms })
+      return h(
+        'div',
+        {
+          className: selected ? 'pm-project on' : 'pm-project',
+          role: 'button',
+          tabIndex: 0,
+          onClick: onPick,
+          onKeyDown: (event) => {
+            if (event.key === 'Enter' || event.key === ' ') onPick()
+          }
+        },
+        h(
+          'div',
+          { className: 'pm-project-main' },
+          h(
+            'div',
+            { className: 'pm-project-name' },
+            String(row.name),
+            row.current === true ? h('span', { className: 'pm-tag' }, t('project.current')) : null
+          ),
+          h('div', { className: 'pm-project-path' }, String(row.root))
+        ),
+        h('div', { className: 'pm-project-meta' }, meta)
+      )
+    }
 
     /**
      * The main panel.
@@ -213,57 +298,74 @@ window.__ModuleLoader__.load({
       const [choice, setChoice] = useState(null)
       const [saving, setSaving] = useState(null)
       const [saveReason, setSaveReason] = useState(null)
+      // Which project the panel is showing. `null` means "whatever the Host says is
+      // current", which is the right default: opening the panel from a session should not
+      // make the user pick the project they are already in.
+      const [selected, setSelected] = useState(null)
+      // Where a save goes. Defaults to `project` when a project is selected, because that
+      // is the narrower and more reversible of the two: it cannot silently change every
+      // other repository the user has open.
+      const [scope, setScope] = useState('project')
 
-      const load = useCallback(async () => {
-        setState({ phase: 'loading', data: null, reason: null })
-        const result = await getJson(STATUS_PATH)
+      const load = useCallback(async (root) => {
+        setState((current) => ({ phase: 'loading', data: current.data, reason: null }))
+        const path = root === null || root === undefined ? STATUS_PATH : `${STATUS_PATH}?project=${encodeURIComponent(root)}`
+        const result = await getJson(path)
         if (result.ok) setState({ phase: 'ready', data: result.data, reason: null })
         else setState({ phase: 'error', data: null, reason: result.reason })
+        return result
       }, [])
 
       useEffect(() => {
-        void load()
-      }, [load])
+        void load(selected)
+      }, [load, selected])
 
-      // The editor mirrors the saved settings until the user touches it, so a
-      // refetch after saving does not fight the control the user is using.
+      // The editor mirrors the saved settings until the project or the scope changes, so
+      // a refetch after saving does not fight the control the user is using.
       useEffect(() => {
         if (state.phase !== 'ready' || state.data === null) return
-        const settings = state.data.settings
-        setChoice((current) =>
-          current ?? {
-            routerTier: settings.routerTier,
-            routerStrategy: settings.routerStrategy,
-            routerProvider: settings.routerProvider,
-            routerModel: settings.routerModel
-          }
-        )
-      }, [state])
+        const shown = scope === 'project' ? state.data.settings : state.data.base
+        setChoice({
+          routerTier: shown.routerTier,
+          routerStrategy: shown.routerStrategy,
+          routerProvider: shown.routerProvider,
+          routerModel: shown.routerModel
+        })
+      }, [state, scope])
 
       const save = useCallback(async () => {
-        if (choice === null) return
+        if (choice === null || state.data === null) return
         setSaving(true)
         setSaveReason(null)
-        // Each changed key is its own request: a partial failure must not look like a
-        // total success, and each write is applied by the Loader independently.
+
+        // Comparing against the layer being edited, not against the effective value: in
+        // `project` scope a field equal to the profile value is still a change worth
+        // saving, and in `global` scope a field that merely shows a project override is not.
+        const shown = scope === 'project' ? state.data.settings : state.data.base
         const pending = [
           ['routerTier', choice.routerTier],
           ['routerStrategy', choice.routerStrategy],
           ['routerProvider', choice.routerProvider],
           ['routerModel', choice.routerModel]
-        ].filter(([key]) => state.data !== null && choice[key] !== state.data.settings[key])
+        ].filter(([key]) => choice[key] !== shown[key])
 
         if (pending.length === 0) {
           setSaving(null)
           setSaveReason({ ok: true, text: t('router.saved') })
           return
         }
+        const root = state.data.root
         for (const [key, value] of pending) {
           try {
             const response = await fetch(CONFIG_PATH, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ key, value })
+              body: JSON.stringify({
+                key,
+                value,
+                scope,
+                ...(root === null || root === undefined ? {} : { project: root })
+              })
             })
             const body = await response.json().catch(() => ({}))
             if (!response.ok) {
@@ -285,10 +387,45 @@ window.__ModuleLoader__.load({
         }
         setSaving(null)
         setSaveReason({ ok: true, text: t('router.saved') })
-        await load()
-      }, [choice, state, t, load])
+        await load(selected)
+      }, [choice, state, scope, selected, t, load])
 
-      if (state.phase === 'loading') {
+      /**
+       * Stop overriding one key for the selected project.
+       * @param {string} key - the setting to release back to the profile value.
+       */
+      const resetOverride = useCallback(
+        async (key) => {
+          if (state.data === null || state.data.root === null) return
+          setSaving(true)
+          setSaveReason(null)
+          try {
+            const response = await fetch(`${CONFIG_PATH}?project=${encodeURIComponent(state.data.root)}`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ key, value: null, scope: 'project' })
+            })
+            const body = await response.json().catch(() => ({}))
+            if (!response.ok) {
+              setSaving(null)
+              setSaveReason({ ok: false, text: `${t('router.failed')}: ${String(body.error ?? `HTTP ${response.status}`)}` })
+              return
+            }
+            setSaving(null)
+            setSaveReason({ ok: true, text: t('router.saved') })
+            await load(selected)
+          } catch (error) {
+            setSaving(null)
+            setSaveReason({ ok: false, text: `${t('router.failed')}: ${error && error.message ? error.message : String(error)}` })
+          }
+        },
+        [state, selected, t, load]
+      )
+
+      // Keep the loading placeholder only on the very first read. Later reads happen while
+      // the user is switching project or scope, and blanking the whole panel for them
+      // makes it flash and lose their place.
+      if (state.phase === 'loading' && state.data === null) {
         return h('div', { className: 'pm-panel' }, h('div', { className: 'pm-muted' }, t('panel.loading')))
       }
       if (state.phase === 'error') {
@@ -296,7 +433,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'pm-panel' },
           h('div', { className: 'pm-banner bad' }, `${t('panel.error')}: ${state.reason}`),
-          h('button', { className: 'pm-btn', onClick: () => void load() }, t('panel.retry'))
+          h('button', { className: 'pm-btn', onClick: () => void load(selected) }, t('panel.retry'))
         )
       }
 
@@ -304,6 +441,57 @@ window.__ModuleLoader__.load({
       const atoms = data.atoms
       const compactions = data.compactions
       const settings = data.settings
+      const base = data.base ?? data.settings
+      const projects = Array.isArray(data.projects) ? data.projects : []
+      const overridden = Array.isArray(data.overridden) ? data.overridden : []
+      const overridable = Array.isArray(data.overridable) ? data.overridable : []
+      const hasProject = data.root !== null && data.root !== undefined
+      // A scope the current state cannot honour is not offered: with no project selected
+      // there is nothing to override, and showing the option anyway would promise a save
+      // that the Host will refuse.
+      const canOverride = hasProject && overridable.length > 0
+      const activeScope = canOverride ? scope : 'global'
+
+      const projectSection = h(
+        'div',
+        { className: 'pm-card' },
+        h(
+          'div',
+          { className: 'pm-head' },
+          h('div', { className: 'pm-card-title' }, t('project.title')),
+          h(
+            'button',
+            { className: 'pm-btn small', onClick: () => void load(selected) },
+            t('panel.retry')
+          )
+        ),
+        h('div', { className: 'pm-hint' }, t('project.select')),
+        projects.length === 0
+          ? h('div', { className: 'pm-muted' }, t('project.none'))
+          : h(
+              'div',
+              { className: 'pm-projects' },
+              projects.map((row) =>
+                h(ProjectRow, {
+                  key: row.key ?? row.root,
+                  row,
+                  t,
+                  selected: data.root !== null && row.root === data.root,
+                  onPick: () => {
+                    setSelected(row.root)
+                    // Picking a project is a statement about which project you are
+                    // configuring, so the panel follows it into project scope rather than
+                    // leaving the scope on a layer the user did not mean.
+                    setScope('project')
+                    setSaveReason(null)
+                  }
+                })
+              )
+            ),
+        data.root === null || data.root === undefined
+          ? h('div', { className: 'pm-banner' }, t('project.unknown'))
+          : h('div', { className: 'pm-hint' }, String(data.root))
+      )
 
       const atomSection =
         atoms === null || atoms.readable !== true
@@ -437,44 +625,162 @@ window.__ModuleLoader__.load({
 
       const configured = String(settings.routerProvider) !== '' && String(settings.routerModel) !== ''
 
+      // Which of the four router keys this project currently owns. Shown next to the field
+      // so a user can tell "this is what I set here" from "this is what I inherited",
+      // which is otherwise invisible and makes a stale override very confusing.
+      const isOwn = (key) => overridden.includes(key)
+
+      // One scope tab. Clicking an unavailable scope is ignored rather than disabled in
+      // markup only, so a keyboard user gets the same behaviour as a mouse user.
+      const scopeTab = (value, label, hint) => {
+        const on = activeScope === value
+        const usable = value === 'global' || canOverride
+        return h(
+          'div',
+          {
+            key: value,
+            className: on ? 'pm-scope-item on' : usable ? 'pm-scope-item' : 'pm-scope-item dim',
+            role: 'button',
+            tabIndex: usable ? 0 : -1,
+            'aria-disabled': usable ? undefined : 'true',
+            onClick: () => {
+              if (usable !== true) return
+              setScope(value)
+              setSaveReason(null)
+            },
+            onKeyDown: (event) => {
+              if (usable !== true) return
+              if (event.key === 'Enter' || event.key === ' ') {
+                setScope(value)
+                setSaveReason(null)
+              }
+            }
+          },
+          h('div', { className: 'pm-choice-title' }, label),
+          h('div', { className: 'pm-choice-desc' }, hint)
+        )
+      }
+
+      const scopeSection = h(
+        'div',
+        { className: 'pm-card' },
+        h('div', { className: 'pm-card-title' }, t('scope.title')),
+        h(
+          'div',
+          { className: 'pm-scope' },
+          scopeTab('global', t('scope.global'), t('scope.global.hint')),
+          scopeTab(
+            'project',
+            t('scope.project'),
+            canOverride ? t('scope.project.hint') : t('scope.project.unavailable')
+          )
+        ),
+        overridden.length === 0
+          ? null
+          : h(
+              'div',
+              { className: 'pm-row' },
+              h('div', { className: 'pm-hint' }, t('scope.overridden')),
+              h(
+                'div',
+                { className: 'pm-chips' },
+                overridden.map((key) =>
+                  h('span', { className: 'pm-chip own', key }, String(key))
+                )
+              )
+            ),
+        overridden.length === 0
+          ? null
+          : h(
+              'div',
+              { className: 'pm-row' },
+              h('div', { className: 'pm-hint' }, t('scope.inherit')),
+              h(
+                'button',
+                {
+                  className: 'pm-btn small',
+                  disabled: saving !== null,
+                  onClick: () => void resetOverride(overridden[0])
+                },
+                `${t('scope.reset')}: ${overridden[0]}`
+              )
+            )
+      )
+
       const routerSection = h(
         'div',
         { className: 'pm-card' },
         h('div', { className: 'pm-card-title' }, t('router.title')),
+        // Which layer these four controls edit, restated where the editing happens: the
+        // scope card can be scrolled out of view, and saving into the wrong layer is the
+        // one mistake this panel can make that has consequences outside the panel.
+        h(
+          'div',
+          { className: 'pm-hint' },
+          activeScope === 'project' ? t('scope.project.hint') : t('scope.global.hint')
+        ),
         h(
           'div',
           { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-          h('div', { className: 'pm-label' }, t('router.tier')),
+          h(
+            'div',
+            { className: 'pm-row' },
+            h('div', { className: 'pm-label' }, t('router.tier')),
+            isOwn('routerTier') ? h('span', { className: 'pm-chip own' }, t('router.overrideOn')) : null
+          ),
           tierChoices
         ),
         h(
           'div',
           { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-          h('div', { className: 'pm-label' }, t('router.strategy')),
+          h(
+            'div',
+            { className: 'pm-row' },
+            h('div', { className: 'pm-label' }, t('router.strategy')),
+            isOwn('routerStrategy') ? h('span', { className: 'pm-chip own' }, t('router.overrideOn')) : null
+          ),
           h('div', { className: 'pm-hint' }, t('router.strategy.hint')),
           strategyChoices
         ),
         h(
           'div',
           { className: 'pm-field' },
-          h('div', { className: 'pm-label' }, t('router.provider')),
+          h(
+            'div',
+            { className: 'pm-row' },
+            h('div', { className: 'pm-label' }, t('router.provider')),
+            isOwn('routerProvider') ? h('span', { className: 'pm-chip own' }, t('router.overrideOn')) : null
+          ),
           h('input', {
             className: 'pm-input',
             value: choice === null ? '' : choice.routerProvider,
             placeholder: 'deepseek',
             onChange: (event) => setChoice((current) => ({ ...(current ?? {}), routerProvider: event.target.value }))
-          })
+          }),
+          // In project scope an empty field means "inherit", which is a real choice rather
+          // than an unfinished edit; naming the inherited value makes that legible.
+          activeScope === 'project' && String(base.routerProvider) !== ''
+            ? h('div', { className: 'pm-hint' }, fill(t('router.empty'), { value: base.routerProvider }))
+            : null
         ),
         h(
           'div',
           { className: 'pm-field' },
-          h('div', { className: 'pm-label' }, t('router.model')),
+          h(
+            'div',
+            { className: 'pm-row' },
+            h('div', { className: 'pm-label' }, t('router.model')),
+            isOwn('routerModel') ? h('span', { className: 'pm-chip own' }, t('router.overrideOn')) : null
+          ),
           h('input', {
             className: 'pm-input',
             value: choice === null ? '' : choice.routerModel,
             placeholder: 'deepseek-chat',
             onChange: (event) => setChoice((current) => ({ ...(current ?? {}), routerModel: event.target.value }))
-          })
+          }),
+          activeScope === 'project' && String(base.routerModel) !== ''
+            ? h('div', { className: 'pm-hint' }, fill(t('router.empty'), { value: base.routerModel }))
+            : null
         ),
         h('div', { className: 'pm-hint' }, t('router.provider.hint')),
         configured
@@ -493,8 +799,20 @@ window.__ModuleLoader__.load({
       const recallSection = h(
         'div',
         { className: 'pm-card' },
-        h('div', { className: 'pm-card-title' }, t('recall.title')),
-        h('div', { className: 'pm-muted' }, fill(t('recall.line'), { budget: settings.recallBudget, limit: settings.recallLimit }))
+        h(
+          'div',
+          { className: 'pm-row' },
+          h('div', { className: 'pm-card-title' }, t('recall.title')),
+          isOwn('recallBudget') || isOwn('recallLimit')
+            ? h('span', { className: 'pm-chip own' }, t('router.overrideOn'))
+            : null
+        ),
+        h('div', { className: 'pm-muted' }, fill(t('recall.line'), { budget: settings.recallBudget, limit: settings.recallLimit })),
+        // Only say there is a different global value when one actually exists, otherwise
+        // this line repeats the one above it.
+        settings.recallBudget === base.recallBudget && settings.recallLimit === base.recallLimit
+          ? null
+          : h('div', { className: 'pm-hint' }, fill(t('recall.line'), { budget: base.recallBudget, limit: base.recallLimit }))
       )
 
       return h(
@@ -504,11 +822,14 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'pm-head' },
           h('div', { className: 'pm-title' }, t('panel.title')),
-          h('button', { className: 'pm-btn', onClick: () => void load() }, t('panel.retry'))
+          saving === null
+            ? null
+            : h('div', { className: 'pm-hint' }, t('router.saving'))
         ),
-        h('div', { className: 'pm-sub' }, data.root === null ? t('panel.noRoot') : String(data.root)),
+        projectSection,
         atomSection,
         compactionSection,
+        scopeSection,
         routerSection,
         recallSection
       )

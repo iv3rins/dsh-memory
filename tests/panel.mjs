@@ -42,6 +42,7 @@ const panelModule = await import('../lib/panel.js').catch((error) => {
 })
 const memory = await import('../core/memory.js')
 const compactions = await import('../core/compactions.js')
+const projects = await import('../core/projects.js')
 const config = await import('../core/config.js')
 
 const root = mkdtempSync(path.join(tmpdir(), 'pm-panel-'))
@@ -92,6 +93,9 @@ panelModule.registerPanelRoutes({
     await writeSetting({ ctx: fakeCtx, entryId: 'project-memory', key, value, logger })
   },
   resolveRoot: () => root,
+  // The picker is optional on the Host side, but this harness models a Host that has it,
+  // so the project-scoped cases below exercise the real path instead of the fallback.
+  listProjects: () => projects.listProjects([{ root, current: true }]),
 })
 
 assert.equal(routes.has(panelModule.STATUS_PATH), true, 'the status route registered')
@@ -419,12 +423,149 @@ try {
     assert.equal(calls.filter(([kind]) => kind === 'end').length, 1, 'it just closes the response')
   }
 
+  // --- 11. A project-scoped save writes the project, never the profile. ---
+  //
+  // This is the one HTTP case whose failure would be invisible: a project-scoped save
+  // that falls through to the global path would look like a success in the panel and
+  // silently change every repository the user has open. So it is asserted on both sides —
+  // the override file appears, and the profile settings object does not move.
+  {
+    const settingsBefore = JSON.parse(JSON.stringify(liveConfig))
+    const writesBefore = writes.length
+
+    const saved = await request('POST', `${panelModule.CONFIG_PATH}?project=${encodeURIComponent(root)}`, {
+      key: 'routerModel',
+      value: 'deepseek-reasoner',
+      scope: 'project',
+    })
+    assert.equal(saved.status, 200, `a project-scoped save is accepted: ${JSON.stringify(saved.body)}`)
+    assert.equal(saved.body.scope, 'project')
+    assert.deepEqual(saved.body.overridden, ['routerModel'], 'the override is reported')
+    assert.equal(saved.body.settings.routerModel, 'deepseek-reasoner', 'and the effective value reflects it')
+
+    const stored = panelModule.readProjectParam({ url: `${panelModule.STATUS_PATH}?project=${root}` })
+    assert.equal(stored, root)
+    const files = projects.settingsFiles(root)
+    assert.equal(files.length, 1, `exactly one override file: ${files.join(', ')}`)
+
+    assert.deepEqual(liveConfig, settingsBefore, 'the profile is untouched by a project-scoped save')
+    assert.equal(writes.length, writesBefore, 'configEditor was not called for a project-scoped save')
+
+    // A key the panel cannot edit at all is refused, and the reason must say *that* —
+    // not "globally", which would point at a control that does not exist. This case only
+    // reaches the guard because a removal request skips `validateSetting`.
+    for (const doomed of [
+      { key: 'projectRoot', value: null },
+      { key: 'nopeNotASetting', value: null },
+    ]) {
+      const refused = await request('POST', `${panelModule.CONFIG_PATH}?project=${encodeURIComponent(root)}`, {
+        ...doomed,
+        scope: 'project',
+      })
+      assert.equal(refused.status, 400, `${doomed.key} is refused`)
+      assert.match(
+        String(refused.body.error),
+        /not editable from the panel/,
+        `${doomed.key} is refused for the true reason, not as a global-only setting: ${refused.body.error}`,
+      )
+    }
+
+    // An unknown project is refused outright: the parameter also selects where the write
+    // goes, so honouring an arbitrary path would be a write primitive.
+    const unknown = await request('POST', `${panelModule.CONFIG_PATH}?project=${encodeURIComponent(root + '\\nope')}`, {
+      key: 'routerModel',
+      value: 'x',
+      scope: 'project',
+    })
+    assert.equal(unknown.status, 400, 'an unknown project is refused')
+
+    // Removing it restores inheritance and leaves no file behind.
+    const removed = await request('POST', `${panelModule.CONFIG_PATH}?project=${encodeURIComponent(root)}`, {
+      key: 'routerModel',
+      value: null,
+      scope: 'project',
+    })
+    assert.equal(removed.status, 200, `removal is accepted: ${JSON.stringify(removed.body)}`)
+    assert.equal(removed.body.value, null)
+    assert.deepEqual(removed.body.overridden, [])
+    assert.deepEqual(projects.settingsFiles(root), [], 'no override file remains')
+  }
+
+  // --- 12. The status route honours a known project and refuses an unknown one. ---
+  {
+    const known = await request('GET', `${panelModule.STATUS_PATH}?project=${encodeURIComponent(root)}`)
+    assert.equal(known.status, 200)
+    assert.equal(known.body.root, root, 'a known project is reported as itself')
+    assert.equal(known.body.scope, 'global', 'with no overrides, it reports the global layer')
+    assert.deepEqual(known.body.overridable, [...projects.OVERRIDABLE], 'and lists what a project may override')
+
+    // Every key the panel can edit today is also overridable, so the "global-only" refusal
+    // is unreachable over HTTP. It is still the correct answer for a key that were
+    // editable-but-not-overridable, and the two predicates are what keep the reasons
+    // honest, so they are asserted directly rather than through a request that cannot
+    // exist yet.
+    assert.equal(panelModule.isEditable('routerModel'), true, 'routerModel is editable')
+    assert.equal(panelModule.isOverridable('routerModel'), true, 'and overridable')
+    assert.equal(panelModule.isEditable('projectRoot'), false, 'projectRoot is not editable')
+    assert.equal(panelModule.isOverridable('projectRoot'), false, 'and not overridable either')
+
+    // The overridable set is a superset of the editable set, not the same set: the two
+    // numeric recall budgets can be overridden per project but have no control in the
+    // panel, so they are edited in the profile file. Asserting the direction rather than
+    // equality keeps this test from demanding a control that does not exist.
+    assert.equal(
+      projects.OVERRIDABLE.every((key) => panelModule.isOverridable(key)),
+      true,
+      'every overridable key is overridable',
+    )
+    const editableButNotOverridable = projects.OVERRIDABLE.filter((key) => panelModule.isEditable(key) !== true)
+    assert.deepEqual(
+      editableButNotOverridable.sort(),
+      ['recallBudget', 'recallLimit'],
+      'exactly the two numeric budgets are overridable without a panel control',
+    )
+
+    const unknown = await request('GET', `${panelModule.STATUS_PATH}?project=${encodeURIComponent(root + '\\nope')}`)
+    assert.equal(unknown.status, 200, 'an unknown project is answered, not errored')
+    assert.equal(unknown.body.root, null, 'but reported as no project rather than silently swapped for the default')
+
+    // A route registered without the optional lister must still answer, degrading to "no
+    // projects known" instead of a 500. The picker is an addition; it cannot be load-bearing.
+    const bareRoutes = new Map()
+    panelModule.registerPanelRoutes({
+      ctx: {
+        effect: (fn) => { fn(); return () => {} },
+        webServer: { register: (route) => { bareRoutes.set(route.path, route); return () => {} } },
+      },
+      logger,
+      readSettings: () => ({ ...config.normalizeConfig(liveConfig) }),
+      applySetting: async () => {},
+      resolveRoot: () => root,
+    })
+    const bareServer = http.createServer((req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1')
+      const route = bareRoutes.get(url.pathname)
+      if (route === undefined) { res.writeHead(404); res.end(); return }
+      route.handler(req, res)
+    })
+    await new Promise((resolve) => bareServer.listen(0, '127.0.0.1', resolve))
+    try {
+      const response = await fetch(`http://127.0.0.1:${bareServer.address().port}${panelModule.STATUS_PATH}`)
+      assert.equal(response.status, 200, 'a host without the project lister still serves the panel')
+      const body = await response.json()
+      assert.deepEqual(body.projects, [], 'and reports no projects rather than failing')
+      assert.equal(body.root, root, 'while still reporting the current project')
+    } finally {
+      await new Promise((resolve) => bareServer.close(resolve))
+    }
+  }
+
   assert.equal(
     loggerLines.filter((line) => line.startsWith('warn')).length >= 0,
     true,
     'warnings are logged rather than thrown',
   )
-  console.log('PANEL OK: the sidebar endpoints report the real store and ledger, write settings only through configEditor, reject values outside the closed set, refuse non-loopback peers, and turn a corrupt store into data')
+  console.log('PANEL OK: the sidebar endpoints report the real store and ledger, write settings only through configEditor, reject values outside the closed set, refuse non-loopback peers, keep a project-scoped save out of the profile, refuse an unknown project path, and turn a corrupt store into data')
 } finally {
   await new Promise((resolve) => server.close(resolve))
   rmSync(root, { recursive: true, force: true })

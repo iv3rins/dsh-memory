@@ -46,6 +46,12 @@ harder to correct than an acknowledged blank.
   that entry's id; every string the panel asks for exists in both languages with identical
   placeholders and no unused key; and its routes and choice values match the host's
   constants. (`tests/client.mjs`)
+- Per-project settings: one directory has one key whatever its spelling, the effective
+  merge returns a copy instead of writing through the profile, an override applies to its
+  own project only, removing the last key deletes the file, a key outside the overridable
+  set is refused, a corrupt file is reported rather than read as an empty override set, the
+  project list is de-duplicated while keeping its order, and the panel refuses to honour a
+  project path it was not told about. (`tests/projects.mjs`)
 
 ## Not verified end to end
 
@@ -142,7 +148,26 @@ harder to correct than an acknowledged blank.
   summary and change the same settings.
 - **The panel is the only UI, and it is read-mostly.** There is no status indicator in
   the conversation and no inline badge. Everything else is tools, commands, and
-  injected context.- **`docs_sync` never rewrites authoritative docs.** It refuses `AGENTS.md`,
+  injected context.
+- **The project list is what this process has seen, not a scan.** The picker offers the
+  configured root, the projects previous steps served, and the current one. It does not
+  walk the filesystem looking for `.dsh-memory/` directories — that would make opening the
+  panel an unbounded disk read, and "every repository with memory on this machine" is not
+  a list anyone asked for. A project never touched by this host process does not appear
+  until it is. The list also does not survive a restart: after one, only the configured
+  project and the new session's project show up.
+- **Six fields are per-project; everything else is global, on purpose.** Paths, baseline
+  budgets, extraction switches, and protected paths describe the installation, not a
+  repository. Making them overridable would let a project change what the plugin is
+  allowed to write.
+- **A per-project override is a file you can also edit by hand.** It is validated on read
+  (an unknown key is ignored, a corrupt file is reported), but nothing prevents a manual
+  edit that this plugin would not have written. The panel is the supported path, not the
+  only one.
+- **The panel's project selection does not change the agent's project.** Choosing a
+  project in the panel changes what the panel displays and where a project-scoped save
+  goes. It does not move the session, and the next `agent/pre-step` still resolves its
+  own root.- **`docs_sync` never rewrites authoritative docs.** It refuses `AGENTS.md`,
   `docs/decisions/`, `docs/adr/`, and `.git/`, and writes proposals to
   `docs/proposals/`. That refusal is the design, not a missing feature.
 - **`architecture_check` implements one rule kind.** `forbid-import`, checked with a
