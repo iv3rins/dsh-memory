@@ -332,6 +332,91 @@ try {
     assert.equal(answer.code, 500, 'a failing resolver is reported as a failure')
     assert.notEqual(answer.body, '', 'the failure carries a body the panel can display')
     assert.match(String(JSON.parse(answer.body).error), /workingDirectory/, 'and the body names the cause')
+    // The stack is what makes a live 500 diagnosable instead of a guessing game.
+    assert.equal(typeof JSON.parse(answer.body).where, 'string', 'and carries a where field')
+  }
+
+  // --- 9. Reporting a failure must not itself fail. ---
+  //
+  // An error object whose `toString` and `message` getter both throw is not exotic: it
+  // is what a proxy or a library-specific error looks like. `String(error)` and
+  // `error.message` are the obvious ways to report a failure, and both can raise — which
+  // is how the handler answered with an empty body instead of a cause.
+  {
+    const routes = new Map()
+    panelModule.registerPanelRoutes({
+      ctx: {
+        effect: (fn) => { fn(); return () => {} },
+        webServer: { register: (route) => { routes.set(route.path, route); return () => {} } },
+        configEditor: fakeEditor,
+      },
+      logger,
+      readSettings: () => ({ ...config.normalizeConfig(liveConfig) }),
+      applySetting: async () => {},
+      resolveRoot: () => {
+        const hostile = {
+          get message() { throw new Error('message getter exploded') },
+          toString() { throw new Error('toString exploded') },
+        }
+        throw hostile
+      },
+    })
+
+    const answer = await new Promise((resolve) => {
+      let code = null
+      const fakeRes = {
+        writeHead: (status) => { code = status },
+        end: (text) => { resolve({ code, body: text ?? '' }) },
+      }
+      routes.get(panelModule.STATUS_PATH).handler(
+        { method: 'GET', socket: { remoteAddress: '127.0.0.1' }, url: panelModule.STATUS_PATH },
+        fakeRes,
+      )
+    })
+    assert.equal(answer.code, 500, 'an undescribable error is still a reported failure')
+    assert.notEqual(answer.body, '', 'and it still produces a body')
+    const parsed = JSON.parse(answer.body)
+    assert.equal(typeof parsed.error, 'string', 'with a string message')
+    assert.equal(parsed.error.length > 0, true, 'that is not empty')
+  }
+
+  // --- 10. A response already in flight is not written twice. ---
+  //
+  // If a failure happens after the headers went out, writing a new status throws inside
+  // the reporter and the client sees a truncated response with no explanation. The
+  // handler must notice and close, not fight.
+  {
+    const routes = new Map()
+    panelModule.registerPanelRoutes({
+      ctx: {
+        effect: (fn) => { fn(); return () => {} },
+        webServer: { register: (route) => { routes.set(route.path, route); return () => {} } },
+        configEditor: fakeEditor,
+      },
+      logger,
+      readSettings: () => ({ ...config.normalizeConfig(liveConfig) }),
+      applySetting: async () => {},
+      resolveRoot: () => { throw new Error('late failure') },
+    })
+
+    const calls = []
+    const fakeRes = {
+      headersSent: true,
+      writeHead: (status) => { calls.push(['writeHead', status]) },
+      end: (text) => { calls.push(['end', text ?? '']) },
+    }
+    let outward = null
+    try {
+      routes.get(panelModule.STATUS_PATH).handler(
+        { method: 'GET', socket: { remoteAddress: '127.0.0.1' }, url: panelModule.STATUS_PATH },
+        fakeRes,
+      )
+    } catch (error) {
+      outward = error
+    }
+    assert.equal(outward, null, 'a committed response does not make the handler throw')
+    assert.equal(calls.filter(([kind]) => kind === 'writeHead').length, 0, 'and does not write a second status')
+    assert.equal(calls.filter(([kind]) => kind === 'end').length, 1, 'it just closes the response')
   }
 
   assert.equal(
