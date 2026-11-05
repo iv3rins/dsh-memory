@@ -110,12 +110,14 @@ TOTAL                                           19  19  3853  314     56
 | --- | --- |
 | `extraction-disabled` | `extractOnCompaction: false` |
 | `empty-summary` | 摘要渲染后为空 |
-| `no-project-root` | 找不到项目根，无处可写 |
-| `already-handled` | 同一进程已处理过该 id |
 | `no-extractable-statements` | 提取器跑完没找到可存内容 |
 | `no-new-knowledge` | 提取到了，但库里全都有，无任何变化 |
 | `store-write-failed` | 原子写入失败 |
 | `too-many-pending-writes` | 待写入过多被丢弃 |
+
+集合里**故意没有**两种：没有「找不到项目根」，因为无处可写也就无处记；没有
+「重放」，因为重放是替换同一 id 的那一行，不产生第二种结果。一个到不了的原因名
+是对这个文件含义的谎报。
 
 **`/memory-status` 现在会显示：**
 
