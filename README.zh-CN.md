@@ -157,6 +157,7 @@ bundle 补丁（`cordis.patch.yml`）只插入一行：
   state/
     current.json        状态文档（schema 2，带修订计数）
     journal.jsonl       已接受写入的追加日志
+    compactions.jsonl   每次观测到的压实一行，含无产出的
     .lock               短时写锁
   memory/
     atoms.jsonl         持久原子，一行一条 JSON 记录
@@ -166,6 +167,8 @@ bundle 补丁（`cordis.patch.yml`）只插入一行：
 ```
 
 `atoms.jsonl` 是追加式、内容寻址的：原子 id 是"类型 + 归一化文本"的哈希，所以同一句话见到两次是**强化同一条记录**，而不是追加副本。`memory_forget` 写的是墓碑而不是删行 —— 记录留作证据，且墓碑是粘性的，之后的提取无法把它带回来。
+
+`compactions.jsonl` 是运维记录：插件每观测到一次压实就记一行，**包含没有产出原子的那些**，每行带一个封闭集合里的 `skipReason`（`empty-summary`、`no-extractable-statements`、`store-write-failed` 等）。原子库只能体现成功，所以没有这个文件时，「提取器坏了」和「项目很闲」看起来完全一样。`/memory-status` 会汇总它。
 
 `index.json` 是缓存。它错了或被删了，`memory_status` 会重建。`current.json` 损坏时会被改名成 `current.json.corrupt-<时间戳>` 并在结果里报告，而不是被悄悄替换 —— 坏掉的文件是证据。
 

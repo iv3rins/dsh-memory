@@ -157,6 +157,7 @@ Everything lives under `.dsh-memory/` in the project root. Commit it or ignore i
   state/
     current.json        the state document (schema 2, revision-counted)
     journal.jsonl       append-only log of accepted writes
+    compactions.jsonl   one row per observed compaction, silent ones included
     .lock               short-lived write lock
   memory/
     atoms.jsonl         durable atoms, one JSON record per line
@@ -166,6 +167,8 @@ Everything lives under `.dsh-memory/` in the project root. Commit it or ignore i
 ```
 
 `atoms.jsonl` is append-only and content-addressed: an atom's id is a hash of its kind and normalized text, so seeing the same statement twice reinforces one record instead of appending a copy. `memory_forget` writes a tombstone rather than deleting the line — the record stays as evidence, and the tombstone is sticky so a later extraction pass cannot bring it back.
+
+`compactions.jsonl` is the operational record: one row per compaction this plugin witnessed, including the ones that produced no atoms, each with a `skipReason` from a closed set (`empty-summary`, `no-extractable-statements`, `store-write-failed`, and so on). The atom store can only show successes, so without this file a broken extractor and an idle project look identical. `/memory-status` summarizes it.
 
 `index.json` is a cache. If it is wrong or deleted, `memory_status` rebuilds it. A corrupt `current.json` is renamed to `current.json.corrupt-<timestamp>` and reported in the result rather than being silently replaced — the damaged file is evidence.
 

@@ -83,9 +83,18 @@ harder to correct than an acknowledged blank.
 - **Router output is untrusted.** Only ids from the supplied digest are honoured; an id
   the router invents is discarded and counted in `rejected`. The router never writes to
   the store.
-- **Extraction is deliberately conservative.** A deterministic parser over the
-  compactor's known section headings, not a model call. What it cannot parse becomes no
-  atom — a missing atom costs one search, a fabricated one corrupts every later turn.
+- **Extraction is not as selective as "conservative" suggests.** A deterministic parser,
+  not a model call, and it treats most prose as a possible fact. Measured on real
+  summaries it will turn `The quick brown fox. It jumped.` into a `fact` atom, and it
+  will store a bare heading (`# Summary`) or a code fence as a fact too. Boilerplate
+  filtering is real but narrow, and it catches harness preambles rather than ordinary
+  narrative. The consequence is dilution: a summary's narration becomes atoms that
+  compete with genuine rules for the recall budget. A missing atom costs one search; a
+  noisy one costs attention on every step it surfaces. See
+  `docs/design/compaction-trace-audit.md` for the measurement.
+- **Compaction is only observed from the moment the plugin is installed.** A project
+  that already has a long history has compactions this plugin never saw, so their
+  content was never extracted. `compactions.jsonl` starts empty and fills forward.
 - **Harness boilerplate is filtered, not stored.** Runtime-context preambles, checkpoint
   headers, and the plugin's own recall block are recognized and dropped before they
   become atoms. The filter is anchored and specific; a genuine rule that happens to start

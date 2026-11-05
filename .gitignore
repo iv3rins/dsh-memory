@@ -27,6 +27,10 @@ dev.log
 tmp-*.cjs
 tmp-*.mjs
 
+# Decoded session logs used for the compaction trace audit (docs/design/
+# compaction-trace-audit.md). ~88 MB of raw conversation, never committed.
+_audit/
+
 # --- This plugin's own runtime output ----------------------------------------
 # `.dsh-memory/` is what the plugin *writes* while doing its job, not what it is:
 # project state, the document index, and the memory atom store. It is meaningful

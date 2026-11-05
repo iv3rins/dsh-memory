@@ -157,6 +157,7 @@ pnpm は `link:` 依存関係が対象の `node_modules` から peer を解決�
   state/
     current.json        状態文書（schema 2、リビジョン管理）
     journal.jsonl       受理された書き込みの追記ログ
+    compactions.jsonl   観測した圧縮ごとに 1 行（無産出も含む）
     .lock               短命の書き込みロック
   memory/
     atoms.jsonl         永続原子、1 行 1 JSON レコード
@@ -166,6 +167,8 @@ pnpm は `link:` 依存関係が対象の `node_modules` から peer を解決�
 ```
 
 `atoms.jsonl` は追記式で内容アドレス指定です。原子の id は「種別 + 正規化テキスト」のハッシュなので、同じ文を二度見ることはコピーを追記することではなく、**同じレコードを強化する**ことになります。`memory_forget` は行を削除せず墓碑を書きます —— 記録は証拠として残り、墓碑は粘着的なので後の抽出パスがそれを復活させることはできません。
+
+`compactions.jsonl` は運用記録です。このプラグインが観測した圧縮ごとに 1 行、**原子を生まなかったものも含めて**、閉じた集合の `skipReason`（`empty-summary`、`no-extractable-statements`、`store-write-failed` など）とともに記録します。原子ストアは成功しか表せないため、このファイルがないと「抽出器の故障」と「プロジェクトが暇」が見分けられません。`/memory-status` が集計します。
 
 `index.json` はキャッシュです。誤っているか削除されていれば、`memory_status` が再構築します。`current.json` が壊れている場合は `current.json.corrupt-<タイムスタンプ>` に改名され、黙って置き換えられるのではなく結果として報告されます —— 壊れたファイルは証拠です。
 

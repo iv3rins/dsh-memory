@@ -30,6 +30,7 @@ const memory = await load(CORE, 'memory.js')
 const gate = await load(CORE, 'gate.js')
 const extract = await load(CORE, 'extract.js')
 const config = await load(CORE, 'config.js')
+const compactions = await load(CORE, 'compactions.js')
 const router = await load(LIB, 'router.js')
 const recall = await load(LIB, 'recall.js')
 const observer = await load(LIB, 'compaction-memory.js')
@@ -635,8 +636,117 @@ try {
       await contained.drain()
       assert.equal(contained.stats().failed, 1, 'a failed write is counted as failed, not thrown')
       assert.equal(contained.stats().written, 0, 'and is not counted as written')
+
+      // The ledger must record the failure too: an audit that only sees successes
+      // is exactly the blind spot this file exists to close.
+      const failedLedger = compactions.readLedger(brokenRoot)
+      assert.equal(failedLedger.ok, true, 'the ledger is readable after a failed atom write')
+      assert.equal(failedLedger.entries.length, 1, 'the failed compaction still leaves a row')
+      assert.equal(failedLedger.entries[0].skipReason, compactions.SKIP_REASONS.WRITE_FAILED, 'and names the failure')
     } finally {
       rmSync(brokenRoot, { recursive: true, force: true })
+    }
+
+    // ------------------------------------------------------------ compaction ledger
+    //
+    // The atom store can only show successes. These assertions pin down the other
+    // half: a compaction that produced nothing must still leave a durable row that
+    // says so, otherwise "the plugin observed nothing" and "the plugin is broken"
+    // are indistinguishable after the fact.
+    {
+      const ledgerRoot = mkdtempSync(path.join(tmpdir(), 'pm-ledger-'))
+      try {
+        mkdirSync(path.join(ledgerRoot, '.dsh-memory', 'memory'), { recursive: true })
+        mkdirSync(path.join(ledgerRoot, '.dsh-memory', 'state'), { recursive: true })
+        const quietLogs = []
+        const quiet = { info: () => {}, warn: (line) => quietLogs.push(line) }
+        const led = observer.createCompactionObserver({ logger: quiet, settings, resolveRoot: () => ledgerRoot })
+        const sess = { id: 'session-ledger', header: { cwd: ledgerRoot } }
+
+        // 1. A productive compaction.
+        led.observe(sess, { type: 'compaction/start', seq: 1, data: { compactionId: 'L-1', turn: 7 } })
+        led.observe(sess, {
+          type: 'compaction/summary',
+          seq: 2,
+          data: { compactionId: 'L-1', summary: [{ type: 'text', text: '## Critical Context\n- Must never rewrite AGENTS.md from a tool call.\n' }] },
+        })
+        await led.drain()
+
+        // 2. A compaction whose summary is empty after rendering. The extractor
+        //    treats almost any prose as a possible fact (see the known limitation in
+        //    docs/design/compaction-trace-audit.md), so the reliable way to reach the
+        //    "no statements" branch is an empty summary, not a terse one.
+        led.observe(sess, {
+          type: 'compaction/summary',
+          seq: 3,
+          data: { compactionId: 'L-2', summary: [{ type: 'text', text: '' }] },
+        })
+        await led.drain()
+
+        // 3. An empty summary.
+        led.observe(sess, {
+          type: 'compaction/summary',
+          seq: 4,
+          data: { compactionId: 'L-3', summary: [{ type: 'text', text: '   ' }] },
+        })
+        await led.drain()
+
+        // 4. Extraction turned off.
+        const off = observer.createCompactionObserver({
+          logger: quiet,
+          settings: { ...settings, extractOnCompaction: false },
+          resolveRoot: () => ledgerRoot,
+        })
+        off.observe(sess, {
+          type: 'compaction/summary',
+          seq: 5,
+          data: { compactionId: 'L-4', summary: [{ type: 'text', text: '## Critical Context\n- Never push without review.\n' }] },
+        })
+        await off.drain()
+
+        const read = compactions.readLedger(ledgerRoot)
+        assert.equal(read.ok, true, 'the ledger file exists')
+        assert.equal(read.entries.length, 4, 'one row per compaction, including the silent ones')
+
+        const byId = new Map(read.entries.map((e) => [e.compactionId, e]))
+        assert.ok(byId.get('L-1').atomsAdded >= 1, 'the productive compaction records what it added')
+        assert.equal(byId.get('L-1').skipReason, null, 'and has no skip reason')
+        assert.equal(byId.get('L-1').turn, 7, 'the turn from compaction/start is carried into the row')
+        assert.equal(byId.get('L-2').skipReason, compactions.SKIP_REASONS.EMPTY_SUMMARY, 'an empty summary names why')
+        assert.equal(byId.get('L-3').skipReason, compactions.SKIP_REASONS.EMPTY_SUMMARY, 'an empty summary names why')
+        assert.equal(byId.get('L-4').skipReason, compactions.SKIP_REASONS.DISABLED, 'a disabled extractor names why')
+
+        // A replay must update the row, not add a second one for the same id.
+        led.observe(sess, {
+          type: 'compaction/summary',
+          seq: 6,
+          data: { compactionId: 'L-1', summary: [{ type: 'text', text: '## Critical Context\n- Must never rewrite AGENTS.md from a tool call.\n' }] },
+        })
+        await led.drain()
+        const afterReplay = compactions.readLedger(ledgerRoot)
+        assert.equal(afterReplay.entries.length, 4, 'a replayed summary does not add a row')
+        assert.equal(
+          afterReplay.entries.filter((e) => e.compactionId === 'L-1').length,
+          1,
+          'the replayed id still appears exactly once',
+        )
+
+        // The summary is what an operator reads first.
+        const summed = compactions.summarizeLedger(afterReplay.entries)
+        assert.equal(summed.total, 4, 'summarize counts every row')
+        assert.equal(summed.produced, 1, 'one compaction produced atoms')
+        assert.equal(summed.skipped, 3, 'three were silent')
+        // L-2 and L-3 are both empty summaries, so the reason groups by count.
+        assert.equal(summed.byReason[compactions.SKIP_REASONS.EMPTY_SUMMARY], 2, 'reasons are grouped, not prose')
+        assert.equal(summed.byReason[compactions.SKIP_REASONS.DISABLED], 1, 'the disabled extractor is its own reason')
+        assert.equal(summed.lastCompactionId, 'L-4', 'the newest row is reported')
+
+        // Ledger writes are independent of atom writes: a broken atom store must not
+        // prevent the ledger from explaining what happened.
+        assert.equal(quietLogs.length, 0, 'a healthy ledger logs no warning')
+      } finally {
+        rmSync(ledgerRoot, { recursive: true, force: true })
+      }
     }
   }
 

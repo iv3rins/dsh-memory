@@ -157,6 +157,7 @@ Todo vive bajo `.dsh-memory/` en la raíz del proyecto. Confirmarlo o ignorarlo:
   state/
     current.json        el documento de estado (esquema 2, con revisiones)
     journal.jsonl       registro de solo-añadir de escrituras aceptadas
+    compactions.jsonl   una fila por compactación observada, incluidas las silenciosas
     .lock               bloqueo de escritura de corta duración
   memory/
     atoms.jsonl         átomos durables, un registro JSON por línea
@@ -166,6 +167,8 @@ Todo vive bajo `.dsh-memory/` en la raíz del proyecto. Confirmarlo o ignorarlo:
 ```
 
 `atoms.jsonl` es de solo-añadir y direccionado por contenido: el id de un átomo es un hash de su tipo y su texto normalizado, así que ver la misma afirmación dos veces refuerza un registro en lugar de añadir una copia. `memory_forget` escribe una lápida en lugar de borrar la línea: el registro queda como evidencia, y la lápida es pegajosa para que una pasada de extracción posterior no pueda traerlo de vuelta.
+
+`compactions.jsonl` es el registro operativo: una fila por cada compactación que este plugin presenció, **incluidas las que no produjeron átomos**, cada una con un `skipReason` de un conjunto cerrado (`empty-summary`, `no-extractable-statements`, `store-write-failed`, etc.). El almacén de átomos solo muestra éxitos, así que sin este archivo un extractor roto y un proyecto inactivo se ven iguales. `/memory-status` lo resume.
 
 `index.json` es una caché. Si está mal o se borra, `memory_status` lo reconstruye. Un `current.json` corrupto se renombra a `current.json.corrupt-<marca de tiempo>` y se informa en el resultado en lugar de reemplazarse en silencio: el archivo dañado es evidencia.
 
