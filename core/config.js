@@ -11,6 +11,15 @@
 /** The three retrieval-routing tiers a profile may select. */
 export const ROUTER_TIERS = Object.freeze(['always', 'smart', 'off'])
 
+/**
+ * Routing strategies, mirroring `lib/router.js`.
+ *
+ * Duplicated rather than imported so `core/config.js` stays free of `lib/` imports —
+ * config is the lower layer, and a cycle between them would make load order matter.
+ * The unit tests assert the two lists agree.
+ */
+export const ROUTER_STRATEGIES = Object.freeze(['task', 'compliance', 'orient'])
+
 /** Every default in one place, so documentation and behavior cannot drift apart. */
 export const DEFAULTS = Object.freeze({
   /** Master switch for tools, prompt section, and context injection. */
@@ -76,6 +85,16 @@ export const DEFAULTS = Object.freeze({
   routerCooldownSteps: 1,
   /** Token ceiling for the memory digest handed to the router. */
   routerDigestBudget: 900,
+  /**
+   * What the router is asked to prioritise.
+   *
+   * `task` weights what the step is about to do; `compliance` weights the rules and
+   * corrections governing the files in play; `orient` weights background and prior
+   * decisions when the request is to understand rather than to act. Each strategy
+   * produces different instructions, because one generic "pick what is relevant"
+   * prompt makes both jobs look identical to the model.
+   */
+  routerStrategy: 'task',
 })
 
 /** Accept only a finite number inside an inclusive range. */
@@ -149,6 +168,7 @@ export function normalizeConfig(raw) {
     routerTimeoutMs: number(input.routerTimeoutMs, DEFAULTS.routerTimeoutMs, 1000, 600000),
     routerCooldownSteps: number(input.routerCooldownSteps, DEFAULTS.routerCooldownSteps, 1, 50),
     routerDigestBudget: number(input.routerDigestBudget, DEFAULTS.routerDigestBudget, 200, 8000),
+    routerStrategy: choice(input.routerStrategy, DEFAULTS.routerStrategy, ROUTER_STRATEGIES),
   }
   if (typeof input.projectRoot === 'string' && input.projectRoot.trim() !== '') {
     settings.projectRoot = input.projectRoot

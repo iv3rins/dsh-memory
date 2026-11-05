@@ -59,11 +59,14 @@ export const EXPERT_THRESHOLD = 0.12
 /** Maximum experts activated in one route (the "sparse" in sparse mixture). */
 export const MAX_ACTIVE_EXPERTS = 3
 
-/** Kinds whose atoms are guaranteed a share of the budget when they are heavy. */
-export const STANDING_KINDS = Object.freeze(['constraint'])
-
-/** Weight from which a standing-kind atom is treated as a hard rule. */
-export const STANDING_MIN_WEIGHT = 4
+/**
+ * Kinds whose atoms are guaranteed a share of the budget when they are heavy.
+ *
+ * Re-exported from `memory.js`, which owns the atom model. Two definitions of "what
+ * counts as a standing rule" is one too many: they drifted apart and the gate's copy
+ * decided safety while the store's copy described it.
+ */
+export { STANDING_KINDS } from './memory.js'
 
 /**
  * Fraction of the budget hard rules may claim before relevance is scored.
@@ -71,8 +74,26 @@ export const STANDING_MIN_WEIGHT = 4
  * The cap matters in both directions: a store full of constraints cannot crowd out
  * the atoms the request is actually about, and a request that matches nothing
  * cannot crowd out the constraints.
+ *
+ * Note what this cap now does that it could not before: because standing no longer
+ * requires `weight >= 4`, a store may hold many more standing atoms than before
+ * (this project's own store went from 5 to 43). The cap is what keeps that from
+ * turning every recall into a wall of rules — the standing atoms *compete* for their
+ * share on score rather than each being guaranteed a slot.
  */
 export const STANDING_BUDGET_SHARE = 0.4
+
+/**
+ * Weight from which a standing-kind atom is treated as a hard rule.
+ *
+ * @deprecated Kept only so old callers do not break. Standing is decided by
+ * `memory.resolveStanding` from the atom's kind and its explicit `standing` flag,
+ * never from importance. A safety property that a weight can silently switch off is
+ * not a safety property: 43 of 136 atoms in this store were genuine constraints
+ * recorded at the neutral default weight and therefore excluded from the standing
+ * budget entirely.
+ */
+export const STANDING_MIN_WEIGHT = 4
 
 /** Below this normalized relevance the deterministic route is considered weak. */
 export const CONFIDENT_SCORE = 3.5
@@ -319,11 +340,15 @@ export function gateAtoms(input) {
    *
    * The claim is capped at a share of the budget and a share of the count, so a store
    * full of rules cannot starve the atoms the request is actually about.
+   *
+   * Eligibility comes from `atom.standing`, not from `atom.weight`. Importance ranks
+   * these atoms against each other; it no longer decides whether a genuine rule is
+   * treated as a rule at all.
    */
   const standingCap = Math.max(1, Math.min(limit, Math.floor(limit * STANDING_BUDGET_SHARE) + 1))
   const standingBudget = Math.max(1, Math.floor(budget * STANDING_BUDGET_SHARE))
   const standing = scored
-    .filter((entry) => STANDING_KINDS.includes(entry.atom.kind) && entry.atom.weight >= STANDING_MIN_WEIGHT)
+    .filter((entry) => entry.atom.standing === true)
     .sort((left, right) => right.score - left.score)
   let standingTokens = 0
   let standingTaken = 0

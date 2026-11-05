@@ -71,6 +71,44 @@ export const KIND_PRIORITY = Object.freeze({
 })
 
 /**
+ * Kinds that may carry standing status — the right to be kept even when unrelated.
+ *
+ * Standing is a safety property: a hard rule that is dropped because the current
+ * request's words do not match it is exactly the moment it gets violated. That is a
+ * different question from how important the rule is, which is why the two are stored
+ * separately.
+ */
+export const STANDING_KINDS = Object.freeze(['constraint'])
+
+/**
+ * Resolve whether an atom carries standing status.
+ *
+ * Two inputs, deliberately not three:
+ *
+ * - An explicit `standing` boolean on the record wins. That is how a caller says
+ *   "keep this regardless" (and how it says "no").
+ * - Otherwise a `STANDING_KINDS` atom is standing. Constraints are the rules a step
+ *   must not break, so they default to standing.
+ *
+ * **`weight` is not consulted.** Importance and standing used to be fused through
+ * `weight >= 4`, which meant a genuine rule recorded at the neutral default silently
+ * lost its hard-rule status — 43 of 136 atoms in this project's own store were in
+ * exactly that state. Raising their weights would have hidden the confusion rather
+ * than fixed it; importance would still be deciding a safety question.
+ *
+ * This is a read-time rule, so existing `atoms.jsonl` files need no migration: old
+ * constraints become standing on the next read, and nothing on disk is rewritten.
+ *
+ * @param {string} kind - the atom's kind.
+ * @param {{ standing?: unknown }} record - the raw or stored record.
+ * @returns {boolean} whether the atom is standing.
+ */
+export function resolveStanding(kind, record) {
+  if (record !== null && typeof record === 'object' && typeof record.standing === 'boolean') return record.standing
+  return STANDING_KINDS.includes(kind)
+}
+
+/**
  * Collapse whitespace and bound the length of one atom statement.
  * @param {unknown} value - candidate text.
  * @returns {string} normalized text, or an empty string.
@@ -155,6 +193,7 @@ export function normalizeAtom(raw, options = {}) {
     files: uniqueStrings(Array.isArray(record.files) ? record.files : [], 12).slice(0, 12),
     weight: Math.round(clamp(record.weight, 2, 1, 5)),
     confidence: Math.round(clamp(record.confidence, 0.5, 0, 1) * 100) / 100,
+    standing: resolveStanding(kind, record),
     seen: Math.round(clamp(record.seen, 1, 1, 100000)),
     createdAt,
     updatedAt: typeof record.updatedAt === 'string' && record.updatedAt !== '' ? record.updatedAt : createdAt,
@@ -191,6 +230,10 @@ export function mergeAtom(existing, incoming) {
     files: uniqueStrings([...existing.files, ...incoming.files], 12).slice(0, 12),
     weight: Math.max(existing.weight, incoming.weight),
     confidence: Math.max(existing.confidence, incoming.confidence),
+    // Standing is sticky in the permissive direction: a rule that ever earned it
+    // keeps it through reinforcement. Re-deriving it per observation would let a
+    // re-extraction with weaker wording demote a rule the user stated plainly.
+    standing: existing.standing === true || incoming.standing === true,
     seen: existing.seen + 1,
     updatedAt: laterTimestamp(existing.updatedAt, incoming.updatedAt),
     source: {

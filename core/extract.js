@@ -10,18 +10,46 @@
  * no way to say "give me the two constraints about Windows paths from that
  * summary".
  *
- * Extraction is deliberately deterministic and conservative. A model call here
- * would double the cost of every compaction and could hallucinate a constraint
- * that the user never stated; a parser over the known section headings cannot.
- * What it cannot parse it leaves alone — a missing atom costs one search, a
- * fabricated one corrupts every later turn.
+ * Extraction is deliberately deterministic and conservative — and "conservative"
+ * has to mean something measurable, not aspirational. A model call here would
+ * double the cost of every compaction and could hallucinate a constraint the user
+ * never stated; a parser over the known section headings cannot. What it cannot
+ * parse it leaves alone — a missing atom costs one search, a fabricated one
+ * corrupts every later turn.
+ *
+ * Admission is therefore *evidentiary*, not transcriptive:
+ *
+ * 1. **Only known sections are read.** The compactor's directive fixes the section
+ *    list. An unrecognized heading is a sign this is not the document we think it
+ *    is, and reading it anyway is how a heading like `# Summary` becomes a "fact".
+ * 2. **Only list items are statements.** A bullet is the compactor's own record
+ *    format and is a deliberate claim. A paragraph is narration — it explains the
+ *    summary to a reader, and storing it made `The quick brown fox. It jumped.`
+ *    into durable memory. Prose that deserves to be memory goes through
+ *    `memory_remember`, where a caller decided so on purpose.
+ * 3. **`constraint` must be earned.** A section heading is not evidence: the
+ *    compactor's `Critical Context` routinely carries background. A statement
+ *    becomes a constraint only when its words carry constraint force, otherwise it
+ *    keeps the section's weaker default kind.
  *
  * Pure Node; no DSH import.
  */
 
 import { normalizeAtomText, ATOM_KINDS } from './memory.js'
 
-/** Section heading → default atom kind, for the compactor's own output shape. */
+/**
+ * Section heading → default atom kind, for the compactor's own output shape.
+ *
+ * This table is also the *admission list*: a heading that is not here is not read.
+ * The compactor's directive fixes these sections, so an unrecognized heading means
+ * either a different document or a summarizer that invented structure — and
+ * guessing in that case is how `# Summary` became a durable "fact".
+ *
+ * `critical context` maps to `fact`, not `constraint`. That heading is where the
+ * summarizer parks anything it considers important, including plain background; a
+ * heading is not evidence that a sentence constrains anything. Statements there
+ * become constraints only by carrying constraint force (see `KIND_CUES`).
+ */
 export const SECTION_KINDS = Object.freeze({
   'primary request and intent': 'task',
   'key technical concepts': 'fact',
@@ -30,7 +58,7 @@ export const SECTION_KINDS = Object.freeze({
   'pending jobs': 'task',
   'current work': 'task',
   'next step': 'task',
-  'critical context': 'constraint',
+  'critical context': 'fact',
 })
 
 /** Sections whose statements are about the user's wishes, not the code. */
@@ -43,9 +71,25 @@ const USER_SECTIONS = new Set(['primary request and intent', 'critical context']
  * before preferences because "never use X" is a constraint even when it appears
  * under a preferences heading.
  */
+/**
+ * Keyword cues that reclassify a statement regardless of its section.
+ *
+ * Order matters: the first matching rule wins, and prohibitions are checked
+ * before preferences because "never use X" is a constraint even when it appears
+ * under a preferences heading.
+ *
+ * These patterns decide whether a sentence is a *rule* or a *description*, which is
+ * a stronger claim than "contains a modal word". A bare `only` was in this list and
+ * it turned `host-only plugin registered through a bundle patch` into a hard
+ * constraint — the word was part of a compound adjective, not a restriction. So
+ * `only` and `always` must now appear in an imperative position: sentence-initial,
+ * or governing a noun the way "only ids may…" does.
+ */
 export const KIND_CUES = Object.freeze([
-  { kind: 'constraint', pattern: /\b(?:must not|must never|never|do not|don't|dont|forbidden|prohibited|refuse|not allowed)\b/i },
-  { kind: 'constraint', pattern: /\b(?:must|required|always|only)\b/i },
+  { kind: 'constraint', pattern: /\b(?:must not|must never|must|never|do not|don't|dont|forbidden|prohibited|not allowed)\b/i },
+  { kind: 'constraint', pattern: /\b(?:required|shall)\b/i },
+  // `only` / `always` only count when they open the sentence or an imperative clause.
+  { kind: 'constraint', pattern: /(?:^|[.;:]\s+)(?:only|always)\b/i },
   { kind: 'preference', pattern: /\b(?:prefers?|preference|would rather|instead of|favour|favor)\b/i },
   { kind: 'pitfall', pattern: /\b(?:error|failed|failure|bug|pitfall|trap|breaks?|broken|regression|does not work|doesn't work)\b/i },
   { kind: 'decision', pattern: /\b(?:decided|decision|chose|chosen|agreed|settled on|we will use|opted)\b/i },
@@ -135,36 +179,68 @@ export function splitSections(text) {
 /**
  * Split a section body into individual statements.
  *
- * Bullets are the documented format, but a model occasionally writes a
- * paragraph; both are handled, and a continuation line is joined to the bullet
- * above it so a wrapped sentence is not chopped in half.
+ * In `bulletsOnly` mode — the mode summary extraction uses — a paragraph that is not
+ * part of a list produces no statement at all. This is the difference between
+ * transcription and admission: a bullet is the compactor's own record format and
+ * represents a deliberate claim, while a paragraph is narration written to explain
+ * the summary to a reader. Storing narration is what made `The quick brown fox. It
+ * jumped.` into durable memory. Prose that deserves to be remembered goes through
+ * `memory_remember`, where a caller decided so on purpose.
+ *
+ * A continuation line still joins the bullet above it, because a wrapped sentence is
+ * one statement even though it occupies two lines. Code fences are skipped entirely:
+ * their contents are not statements about the project.
  *
  * @param {string} body - section body.
+ * @param {{ bulletsOnly?: boolean }} [options] - whether to require list form.
  * @returns {string[]} statements.
  */
-export function splitStatements(body) {
+export function splitStatements(body, options = {}) {
+  const bulletsOnly = options.bulletsOnly === true
   /** @type {string[]} */
   const statements = []
   let current = null
+  let inFence = false
+  const flush = () => {
+    if (current !== null) {
+      statements.push(current)
+      current = null
+    }
+  }
   for (const rawLine of String(body).split('\n')) {
     const line = rawLine.trimEnd()
+    // A fence marker is never a statement, and neither is anything inside one.
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      inFence = !inFence
+      flush()
+      continue
+    }
+    if (inFence) continue
     if (line.trim() === '') {
-      if (current !== null) {
-        statements.push(current)
-        current = null
-      }
+      flush()
       continue
     }
     const bullet = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line)
     if (bullet !== null) {
-      if (current !== null) statements.push(current)
-      current = bullet[1]
+      flush()
+      const content = bullet[1]
+      if (/^\s*(?:```|~~~)/.test(content)) {
+        // `- ```js` opens a fence inside a bullet; treat the rest as code.
+        inFence = true
+        continue
+      }
+      current = content
+      continue
+    }
+    if (bulletsOnly) {
+      // A bare paragraph is narration. Drop it and anything that continues it.
+      flush()
       continue
     }
     if (current === null) current = line.trim()
     else current = `${current} ${line.trim()}`
   }
-  if (current !== null) statements.push(current)
+  flush()
   return statements
     .map((statement) => statement.trim())
     .filter((statement) => statement !== '' && !EMPTY_MARKERS.has(statement.toLowerCase()))
@@ -274,12 +350,27 @@ export function extractFromSummary(input) {
   const maxChars = input.maxChars ?? 480
   /** @type {object[]} */
   const atoms = []
-  /** @type {{ heading: string | null, statements: number, atoms: number }[]} */
+  /** @type {{ heading: string | null, statements: number, atoms: number, admitted: boolean }[]} */
   const sections = []
   let skipped = 0
+  let unknownSections = 0
 
   for (const section of splitSections(input.summary)) {
-    const statements = splitStatements(section.body)
+    const heading = typeof section.heading === 'string' ? section.heading.toLowerCase() : null
+    // Only the compactor's own sections are read. Anything else — an H1 title, a
+    // prose preamble with no heading, a summarizer that invented a section — is not
+    // the document this parser claims to understand.
+    const admitted = heading !== null && SECTION_KINDS[heading] !== undefined
+    if (!admitted) {
+      unknownSections += 1
+      if (section.body.trim() !== '') {
+        // Count what was deliberately not read, so a caller can tell "nothing here"
+        // from "nothing recognized".
+        skipped += section.body.split('\n').filter((line) => line.trim() !== '').length
+      }
+      continue
+    }
+    const statements = splitStatements(section.body, { bulletsOnly: true })
     let emitted = 0
     for (const statement of statements) {
       if (atoms.length >= maxAtoms) {
@@ -293,7 +384,7 @@ export function extractFromSummary(input) {
         skipped += 1
         continue
       }
-      const atom = atomFromStatement(statement, { heading: section.heading })
+      const atom = atomFromStatement(statement, { heading })
       if (atom === null) {
         skipped += 1
         continue
@@ -310,10 +401,10 @@ export function extractFromSummary(input) {
       })
       emitted += 1
     }
-    if (statements.length > 0) sections.push({ heading: section.heading, statements: statements.length, atoms: emitted })
+    sections.push({ heading: section.heading, statements: statements.length, atoms: emitted, admitted: true })
   }
 
-  return { atoms, sections, skipped }
+  return { atoms, sections, skipped, unknownSections }
 }
 
 /**

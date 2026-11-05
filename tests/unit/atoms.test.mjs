@@ -386,6 +386,127 @@ try {
     assert.match(pollutedSummary.atoms[0].text, /Never rewrite AGENTS\.md/, 'the surviving atom is the real one')
   }
 
+  // ------------------------------------------------- standing is not importance
+  {
+    // A constraint recorded at the neutral default weight is still a hard rule.
+    // This is the case that was silently excluded before: 43 of 136 atoms in this
+    // project's own store were genuine constraints at weight 2.
+    const lowWeight = memory.normalizeAtom({ kind: 'constraint', text: 'Never push without review', weight: 2 })
+    assert.equal(lowWeight.weight, 2, 'the atom keeps its declared importance')
+    assert.equal(lowWeight.standing, true, 'standing is decided by kind, not by weight')
+    assert.equal(memory.resolveStanding('constraint', { weight: 1 }), true, 'a weight of 1 does not demote a constraint')
+    assert.equal(memory.resolveStanding('fact', { weight: 5 }), false, 'a weight of 5 does not promote a fact')
+
+    // An explicit flag wins either way, so a caller can opt in or out.
+    assert.equal(memory.resolveStanding('constraint', { standing: false }), false, 'an explicit false opts a constraint out')
+    assert.equal(memory.resolveStanding('pitfall', { standing: true }), true, 'an explicit true opts another kind in')
+
+    // Standing survives reinforcement, so a weaker re-extraction cannot demote it.
+    const existing = memory.normalizeAtom({ kind: 'constraint', text: 'Never push without review', standing: true })
+    const weaker = memory.normalizeAtom({ kind: 'constraint', text: 'Never push without review', standing: false })
+    assert.equal(memory.mergeAtom(existing, weaker).standing, true, 'reinforcement cannot take standing away')
+
+    // The gate must treat a low-weight constraint as standing. This is the behaviour
+    // the old `weight >= 4` check got wrong, so it is asserted through the gate and
+    // not only through the model.
+    const gated = gate.gateAtoms({
+      atoms: [
+        memory.normalizeAtom({ kind: 'constraint', text: 'Never rewrite AGENTS.md from a tool call', weight: 2 }),
+        memory.normalizeAtom({ kind: 'fact', text: 'The build script lives in scripts/build.mjs', weight: 5 }),
+      ],
+      query: gate.buildQuery(['tidy up the readme docs']),
+      budget: 400,
+      limit: 4,
+      now: Date.parse('2026-01-05T00:00:00.000Z'),
+    })
+    const kept = gated.selected.find((entry) => entry.atom.kind === 'constraint')
+    assert.ok(kept !== undefined, 'a weight-2 constraint is still kept when the request does not match it')
+    assert.match(
+      String(kept.reasons.join(' ')),
+      /standing/,
+      'and it is kept for being standing, not for matching the query',
+    )
+  }
+
+  // ------------------------------------------- admission: noise never becomes memory
+  {
+    // Each case is a real failure mode measured against this store. Extraction is an
+    // admission decision now, not a transcription of the summary.
+    const cases = [
+      ['prose with no heading at all', 'The quick brown fox. It jumped.'],
+      ['a bare H1 title', '# Summary'],
+      ['an unknown section heading', '## Notes\n- something happened here\n'],
+      ['a heading-only section', '## Files and Code\n```\nnone\n```\n'],
+      ['narration inside a known section', '## Key Technical Concepts\nThis paragraph explains the code to a reader.\n'],
+    ]
+    for (const [label, summary] of cases) {
+      const result = extract.extractFromSummary({ summary, compactionId: 'c-noise' })
+      assert.deepEqual(result.atoms, [], `nothing is admitted from ${label}`)
+    }
+
+    // The list form inside a known section still works: the fix must not make the
+    // extractor useless.
+    const kept = extract.extractFromSummary({
+      summary: '## Key Technical Concepts\n- Cordis plugins register tools through ctx.tools.register.\n',
+      compactionId: 'c-keep',
+    })
+    assert.equal(kept.atoms.length, 1, 'a bullet in a known section is still admitted')
+    assert.equal(kept.atoms[0].kind, 'fact', 'and keeps the section default kind')
+
+    // Constraint-ness is earned by wording, not granted by the heading. `Critical
+    // Context` is where the summarizer parks anything it thinks matters.
+    const background = extract.extractFromSummary({
+      summary: '## Critical Context\n- The project runs on Windows with PowerShell 5.1.\n',
+      compactionId: 'c-bg',
+    })
+    assert.equal(background.atoms.length, 1, 'background in Critical Context is still stored')
+    assert.equal(background.atoms[0].kind, 'fact', 'but it is not a constraint just because of its heading')
+
+    const rule = extract.extractFromSummary({
+      summary: '## Critical Context\n- Never rewrite AGENTS.md from a tool call.\n',
+      compactionId: 'c-rule',
+    })
+    assert.equal(rule.atoms[0].kind, 'constraint', 'constraint force in the wording still earns the kind')
+    // Extraction yields candidates; standing is assigned when the atom is normalized
+    // on the way into the store, which is what the next assertion checks.
+    assert.equal(rule.atoms[0].standing, undefined, 'extraction does not pre-assign standing')
+    assert.equal(memory.normalizeAtom(rule.atoms[0]).standing, true, 'but a constraint is standing once stored')
+
+    // Architecture notes parked under Critical Context used to become "constraints"
+    // purely because of the heading. They are the bulk of the mislabeled atoms in a
+    // real store, and they made the constraint kind meaningless.
+    for (const architectureNote of [
+      'DSH plugins are Cordis plugins; host-only plugin registered through a bundle patch',
+      '`session/event` is post-commit, fire-and-forget; listener failures log and continue',
+      '`delivery:parent` emits a visible user-role completion notice',
+    ]) {
+      const note = extract.extractFromSummary({
+        summary: `## Critical Context\n- ${architectureNote}\n`,
+        compactionId: 'c-arch',
+      })
+      assert.equal(note.atoms.length, 1, 'the note is still remembered')
+      assert.equal(note.atoms[0].kind, 'fact', `an architecture note is a fact, not a rule: ${architectureNote.slice(0, 40)}`)
+    }
+
+    // The cues that DO earn the kind are the modal ones, and they must keep working
+    // in both directions of phrasing.
+    for (const binding of [
+      'Must pass baseRev to state_update',
+      'Do not replace ctx.compaction; exactly one implementation is allowed',
+      'The router must never write to the atom store',
+      'Only ids from the supplied digest are honoured',
+    ]) {
+      const earned = extract.extractFromSummary({ summary: `## Critical Context\n- ${binding}\n`, compactionId: 'c-b' })
+      assert.equal(earned.atoms[0].kind, 'constraint', `binding wording earns the constraint kind: ${binding.slice(0, 40)}`)
+    }
+
+    // The unread material is counted, so "nothing recognized" is distinguishable from
+    // "nothing there".
+    const unrecognized = extract.extractFromSummary({ summary: '## Notes\n- a\n- b\n', compactionId: 'c-u' })
+    assert.ok(unrecognized.unknownSections > 0, 'unrecognized sections are counted, not silently dropped')
+    assert.ok(unrecognized.skipped > 0, 'and their lines are counted as skipped')
+  }
+
   // ------------------------------------------------------------------- router
   {
     const atoms = [atom('constraint', 'Damage must stay an integer'), atom('fact', 'The build ran once')]
@@ -416,9 +537,36 @@ try {
     const broken = router.parseRouterReply('no json at all', allowed)
     assert.ok(broken.error !== null, 'an unparseable reply is an error, not an empty selection')
 
-    const applied = router.applyRouterSelection({ ids: [atoms[0].id], atoms, gateOf: () => 0.5, budget: 400, limit: 4 })
-    assert.equal(applied.selected.length, 1, 'the routed selection is projected onto the store')
-    assert.deepEqual(applied.selected[0].reasons, ['selected by the router subagent'], 'provenance names the router')
+    // `atoms[0]` is a constraint, so it is standing: it is kept before the router is
+    // consulted and the router cannot remove it. `atoms[1]` is a fact, so it can only
+    // arrive through the router.
+    const applied = router.applyRouterSelection({ ids: [atoms[0].id, atoms[1].id], atoms, gateOf: () => 0.5, budget: 400, limit: 4 })
+    assert.equal(applied.selected.length, 2, 'the routed selection is projected onto the store')
+    assert.deepEqual(
+      applied.selected.find((entry) => entry.atom.id === atoms[0].id).reasons,
+      ['standing rule: kept regardless of the router'],
+      'a standing rule is kept by the standing path, not by the router',
+    )
+    assert.deepEqual(
+      applied.selected.find((entry) => entry.atom.id === atoms[1].id).reasons,
+      ['selected by the router subagent'],
+      'a non-standing atom is attributed to the router',
+    )
+
+    // The structural guarantee: the router returning nothing must not delete the
+    // rules. This was the real hole — an unimpressed model silently dropped exactly
+    // the constraint the step was about to violate.
+    const empty = router.applyRouterSelection({ ids: [], atoms, gateOf: () => 0.5, budget: 400, limit: 4 })
+    assert.equal(empty.selected.length, 1, 'an empty router reply still leaves the standing rule')
+    assert.equal(empty.selected[0].atom.id, atoms[0].id, 'and it is the constraint that survived')
+    assert.equal(empty.standingKept, 1, 'the result reports that standing did the work')
+
+    // The router also cannot drop a standing rule by omitting it from a non-empty reply.
+    const partial = router.applyRouterSelection({ ids: [atoms[1].id], atoms, gateOf: () => 0.5, budget: 400, limit: 4 })
+    assert.ok(
+      partial.selected.some((entry) => entry.atom.id === atoms[0].id),
+      'a router reply that omits the constraint does not remove it',
+    )
 
     const overBudget = router.applyRouterSelection({ ids: [atoms[0].id, atoms[1].id], atoms, gateOf: () => 0.5, budget: 2, limit: 4 })
     assert.ok(overBudget.dropped > 0, 'the router cannot exceed the token budget')
@@ -463,6 +611,86 @@ try {
 
     const none = await router.runRouter({ delegate: async () => '{"ids":[]}', context: 'x', atoms: [], limit: 2, budget: 400, timeoutMs: 500 })
     assert.equal(none.ok, false, 'an empty digest is not a router call')
+
+    // ------------------------------------------------- strategies and candidates
+    //
+    // Two separate claims, both of which the old implementation got wrong:
+    // the instructions must differ by strategy, and a relevant atom must actually
+    // reach the digest rather than losing its place to whatever was stored first.
+
+    assert.deepEqual(
+      [...router.ROUTER_STRATEGIES],
+      [...config.ROUTER_STRATEGIES],
+      'the router and the config agree on the strategy list, so a config value cannot name a strategy that does not exist',
+    )
+    const prompts = new Set(router.ROUTER_STRATEGIES.map((strategy) => router.buildRouterInstructions(strategy)))
+    assert.equal(prompts.size, router.ROUTER_STRATEGIES.length, 'each strategy produces different instructions')
+    assert.equal(
+      router.buildRouterInstructions('nonexistent'),
+      router.buildRouterInstructions('task'),
+      'an unknown strategy falls back to the default rather than producing no instructions',
+    )
+    for (const strategy of router.ROUTER_STRATEGIES) {
+      const instructions = router.buildRouterInstructions(strategy)
+      assert.match(instructions, /BINDING/, 'every strategy asks the model to separate a binding rule from background')
+      assert.match(instructions, /MERELY PROMINENT/, 'and to distrust prominence as a relevance signal')
+      assert.match(instructions, /ids/, 'and to reply with ids')
+    }
+
+    // Candidate composition: put a highly relevant atom *last* in store order and a
+    // screen of old irrelevant atoms in front of it. Taking the first N would hide it.
+    const filler = Array.from({ length: 30 }, (_, index) =>
+      atom('fact', `Archived note number ${index} about an unrelated subsystem and its history`),
+    )
+    const target = atom('decision', 'The damage formula must use integer arithmetic')
+    const composed = [...filler, target]
+    const rank = new Map(composed.map((entry) => [entry.id, entry.id === target.id ? 99 : 0]))
+    const ranked = router.buildDigest({ context: 'change the damage formula', atoms: composed, limit: 4, budget: 400, rank })
+    assert.ok(
+      ranked.offered.some((entry) => entry.id === target.id),
+      'the relevant atom reaches the digest even though it was last in store order',
+    )
+    assert.equal(ranked.truncated, true, 'the digest still discloses that it truncated')
+    const unranked = router.buildDigest({ context: 'change the damage formula', atoms: composed, limit: 4, budget: 400 })
+    assert.equal(
+      unranked.offered.some((entry) => entry.id === target.id),
+      false,
+      'without a ranking the old order is used, which is what the ranking exists to fix',
+    )
+
+    // A standing rule must be offered even when it scores nothing against the request,
+    // because its wording is exactly what will not match.
+    const binding = atom('constraint', 'Never rewrite AGENTS.md from a tool call')
+    const withBinding = router.buildDigest({
+      context: 'tidy the changelog',
+      atoms: [...filler, binding],
+      limit: 6,
+      budget: 400,
+      rank: new Map([...filler.map((entry) => [entry.id, 5]), [binding.id, 0]]),
+    })
+    assert.ok(
+      withBinding.offered.some((entry) => entry.id === binding.id),
+      'a standing rule is offered to the router even with zero query overlap',
+    )
+
+    // Every kind keeps a representative, so a category cannot vanish from the digest.
+    const mixed = [
+      atom('fact', 'A background statement about the build'),
+      atom('pitfall', 'The zstd frame loop silently returns zero bytes'),
+      atom('question', 'Whether the ledger should be pruned is undecided'),
+    ]
+    const covered = router.buildDigest({
+      context: 'build',
+      atoms: mixed,
+      limit: 3,
+      budget: 600,
+      rank: new Map([[mixed[0].id, 9], [mixed[1].id, 8], [mixed[2].id, 0]]),
+    })
+    assert.equal(covered.offered.length, 3, 'all three fit a generous budget')
+    assert.ok(
+      new Set(covered.offered.map((entry) => entry.kind)).size === 3,
+      'each kind is represented in the digest',
+    )
   }
 
   // ------------------------------------------------------------------- recall
@@ -538,6 +766,12 @@ try {
     assert.equal(degraded.route, 'deterministic', 'the degraded route says so')
     assert.match(String(degraded.tier), /degraded/, 'the tier line discloses the degradation')
 
+    // A router that abstains must not be able to delete the rules.
+    //
+    // The router is a model reading a truncated digest, so `[]` is an ordinary reply.
+    // Letting it blank the block would make "the router was unimpressed" the cheapest
+    // way to lose the constraint the step is about to violate — the exact failure this
+    // memory exists to prevent. Abstaining now yields the standing rules only.
     const routingNone = await recall.recallForStep({
       root,
       settings: { ...settings, routerTier: 'always' },
@@ -546,8 +780,10 @@ try {
       delegate: async () => '{"ids":[],"reason":"nothing relevant"}',
       now: Date.parse('2026-01-05T00:00:00.000Z'),
     })
-    assert.equal(routingNone.ok, false, 'a router that selects nothing produces no injection')
-    assert.match(String(routingNone.reason), /selected no relevant atoms/, 'the reason says the router abstained')
+    assert.equal(routingNone.ok, true, 'an abstaining router still leaves the standing rules, so a block is injected')
+    assert.match(routingNone.block, /integer/, 'the constraint survives an empty router reply')
+    assert.equal(routingNone.router.ok, true, 'the router itself succeeded; it simply chose nothing')
+    assert.equal(routingNone.router.ids, 0, 'and the result records that it chose nothing')
 
     const described = recall.describeRecall(routed)
     assert.match(described, /route subagent/, 'describeRecall names the route')
