@@ -249,6 +249,25 @@ try {
       /cannot find/,
       'a missing entry is an error, not a no-op',
     )
+    // Cordis does not return `undefined` for a service this activation never declared:
+    // reading it throws. Modelling that here is the difference between testing the
+    // guard and testing a context shape the framework never produces — the panel used
+    // to answer a save with `cannot get property "configEditor" without inject` because
+    // the null check below the read could not run.
+    const undeclared = new Proxy(
+      {},
+      {
+        get(_target, property) {
+          if (property === 'then') return undefined
+          throw new Error(`cannot get property "${String(property)}" without inject`)
+        },
+      },
+    )
+    await assert.rejects(
+      () => writeSetting({ ctx: undeclared, entryId: 'project-memory', key: 'routerTier', value: 'off', logger }),
+      /does not expose configEditor/,
+      'a context that throws on the read still yields the panel\'s own explanation, not a framework trace',
+    )
   }
 
   // --- 6. A corrupt line is tolerated and disclosed, not hidden. ---
