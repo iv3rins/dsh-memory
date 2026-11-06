@@ -61,11 +61,18 @@ const JUDGE_MODEL = process.env.JUDGE_MODEL ?? MODEL
 /** Conservative token estimate, matching the plugin's own assumption. */
 const estimateTokens = (text) => Math.ceil(String(text).length / 4)
 
-/** One chat completion. Returns text and token usage. */
+/**
+ * One chat completion.
+ *
+ * Returns the text, the raw usage object, and the wall-clock latency. Phase 2 needs all
+ * three: attributing a failure without knowing what the call cost is guesswork, and the
+ * endpoint reports token counts in a partly non-standard shape (see `usageOf`).
+ */
 async function chat(key, messages, options = {}) {
   if (BASE_URL === '') {
     throw new Error('LLM_BASE_URL is not set; point it at an OpenAI-compatible /v1 endpoint (see docs/design/benchmark-compaction-loss.md)')
   }
+  const startedAt = Date.now()
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
@@ -77,11 +84,36 @@ async function chat(key, messages, options = {}) {
     }),
   })
   const text = await res.text()
+  const latencyMs = Date.now() - startedAt
   if (res.ok !== true) throw new Error(`LLM ${res.status}: ${text.slice(0, 200)}`)
   const json = JSON.parse(text)
   return {
     content: json.choices?.[0]?.message?.content ?? '',
-    usage: json.usage ?? {},
+    usage: normalizeUsage(json.usage ?? {}),
+    rawUsage: json.usage ?? {},
+    latencyMs,
+  }
+}
+
+/**
+ * Flatten a provider usage object into input/output counts.
+ *
+ * This endpoint answers with `input_tokens` / `output_tokens` and leaves
+ * `prompt_tokens` / `completion_tokens` at 0, which is the opposite of the OpenAI
+ * convention. Reading only the OpenAI names would have recorded every call as costing
+ * nothing, so both spellings are accepted and the larger value wins.
+ */
+function normalizeUsage(usage) {
+  const pick = (...names) => {
+    for (const name of names) {
+      const value = usage?.[name]
+      if (typeof value === 'number' && value > 0) return value
+    }
+    return 0
+  }
+  return {
+    input: pick('input_tokens', 'prompt_tokens'),
+    output: pick('output_tokens', 'completion_tokens'),
   }
 }
 
@@ -94,6 +126,11 @@ async function chat(key, messages, options = {}) {
  * `message.content` array. Filtering by record type is what makes the transcript the
  * conversation rather than 80% bookkeeping — an earlier version read only
  * `message.content` and silently dropped most of the history.
+ *
+ * Each turn keeps `rawIndex`, the position of its record in the file. The dataset's
+ * `evidence.turn_index` is an index into those raw records, **not** into the filtered
+ * conversation, so anything that resolves an annotation must use `rawIndex`. Assuming
+ * the two were the same made 7 of 12 evidence lookups land outside their session.
  */
 function loadSessions(projectId) {
   const dir = path.join(BENCH, projectId)
@@ -104,7 +141,7 @@ function loadSessions(projectId) {
   for (const name of names) {
     const lines = readFileSync(path.join(dir, name), 'utf8').trim().split('\n')
     const turns = []
-    for (const line of lines) {
+    for (const [rawIndex, line] of lines.entries()) {
       let parsed
       try {
         parsed = JSON.parse(line)
@@ -133,9 +170,9 @@ function loadSessions(projectId) {
       }
       text = text.trim()
       if (text === '') continue
-      turns.push({ role, text, compactSummary: parsed?.isCompactSummary === true })
+      turns.push({ role, text, rawIndex, compactSummary: parsed?.isCompactSummary === true })
     }
-    sessions.push({ id: name.replace('.jsonl', ''), turns })
+    sessions.push({ id: name.replace('.jsonl', ''), turns, rawCount: lines.length })
   }
   return sessions
 }
@@ -223,19 +260,19 @@ async function compact(key, transcript, targetTokens) {
 
 /** Ask one arm a question. */
 async function answer(key, context, question) {
-  const { content, usage } = await chat(key, [
+  const { content, usage, latencyMs } = await chat(key, [
     {
       role: 'system',
       content: 'You answer questions about a software project using only the provided context. If the context does not contain the answer, say "I don\'t know". Be concise.',
     },
     { role: 'user', content: `${context}\n\n=== QUESTION ===\n${question}` },
   ], { maxTokens: 300 })
-  return { answer: content.trim(), usage }
+  return { answer: content.trim(), usage, latencyMs }
 }
 
 /** Judge one answer against the reference. */
 async function judge(key, question, reference, hypothesis) {
-  const { content, usage } = await chat(key, [
+  const { content, usage, latencyMs } = await chat(key, [
     {
       role: 'system',
       content: 'You grade an answer against a reference answer. Reply with JSON only: {"verdict":"CORRECT"|"PARTIAL"|"WRONG","reason":"<short>"}. CORRECT means the key facts match. PARTIAL means some key facts are right but important detail is missing. WRONG means the key facts are absent or contradicted.',
@@ -257,7 +294,10 @@ async function judge(key, question, reference, hypothesis) {
       reason = 'unparsable judge reply'
     }
   }
-  return { verdict, reason, usage }
+  // Usage and latency are returned because the cost accounting needs the judge too: a
+  // report that itemises only the answer calls understates every arm by the same judged
+  // call, which still has to be paid for on every question.
+  return { verdict, reason, usage, latencyMs }
 }
 
 /** Deterministic sample so a rerun scores the same questions. */
