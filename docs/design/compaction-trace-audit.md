@@ -1,11 +1,11 @@
 # 真实会话痕迹审计（2026-11-05）
 
-对 `D:\iverins_workspace\dsh-memory` 的真实运行痕迹做了一次取证审计，用来回答两个问题：
+对本项目的真实运行痕迹做了一次取证审计，用来回答两个问题：
 
 1. 宿主里**真的有**压实（compaction）发生吗？
 2. 插件**真的**在压实之后把记忆召回了吗？
 
-审计对象是从 `~/.dsh/sessions/--D-iverins_workspace-dsh-memory--/` 解出的 23 个会话、
+审计对象是从 `~/.dsh/sessions/<本项目对应的会话目录>/` 解出的 23 个会话、
 87.7 MB 的 `session.v4.jsonl`。解压需要逐帧解码 —— 这些文件是多帧追加的 zstd 流，
 `zlib.zstdDecompressSync()` 只解第一帧，会得到 0 字节。
 
@@ -22,14 +22,14 @@
 
 ```
 session                                        comp sum steps base recall
-session-f1122ce5-c3dd-4af6-97d9-a88c6de089ea      4   4   472   10     30
-session-1d0dc157-c053-4a52-8f63-645e1bddd185      0   0   179    3     26
-session-e5d2208a-6349-4d64-982e-9e6218aae8a5      6   6   824    1      0
-session-2600bc2d-ccbd-48a1-8102-e1e264748655      4   4   733   37      0
-session-e47402c5-b2b1-413e-a742-0a948a7d603f      4   4   403    1      0
-session-3bdd11a9-1b2e-4869-b871-b0a35dc08fd1      1   1    97   31      0
-session-1105399c-ed8c-4108-8d7d-85b4d49523a5      0   0   119  119      0
-session-3eb4998f-f221-42ca-8ce9-792e8903009a      0   0    76   76      0
+session-cc76d55da542      4   4   472   10     30
+session-af446fda1e24      0   0   179    3     26
+session-5623d58e73f4      6   6   824    1      0
+session-5ea861c9042a      4   4   733   37      0
+session-f99f0e940e56      4   4   403    1      0
+session-1413c3df10e9      1   1    97   31      0
+session-9272653f4d4a      0   0   119  119      0
+session-ad608f757a13      0   0    76   76      0
 （其余 16 个会话：base ≤ 14，recall 均为 0）
 
 TOTAL                                           19  19  3853  314     56
@@ -46,18 +46,18 @@ TOTAL                                           19  19  3853  314     56
 
 ### 2. 基线曾每一步都重发，现在已修好（历史痕迹）
 
-`session-1105399c` 与 `session-3eb4998f` 分别是 **119 次注入 / 119 步**、**76 次注入 / 76 步** ——
+`session-9272653f4d4a` 与 `session-ad608f757a13` 分别是 **119 次注入 / 119 步**、**76 次注入 / 76 步** ——
 每一步都注入一份完全相同的基线（`baselineIdentity` 恒为 `8cf1ce82f3029264`，119 个**不同 seq**）。
 时间是 2026-11-03，而 `surfaceHasBaseline` 的去重是 11-05 写的。属修复前的历史痕迹。
 
-`session-1d0dc157` 与 `session-f1122ce5` 里能看到清晰的切换点：
+`session-af446fda1e24` 与 `session-cc76d55da542` 里能看到清晰的切换点：
 无 `recallIdentity` 的召回（`…98227` → `…99842`）全部早于有 identity 的（`…99925` 之后）。
 **当前代码是对的，这两个会话留下了修复前后的分界线。**
 
 ### 3. 压实与召回脱节 —— 这是真问题
 
-19 次压实，只有 `f1122ce5` 和 `1d0dc157` 两个会话产生过召回。
-其余 17 次压实所在的 4 个会话（`e5d2208a`、`2600bc2d`、`e47402c5`、`3bdd11a9`）**召回数为 0**。
+19 次压实，只有 `session-cc76d55da542` 和 `session-af446fda1e24` 两个会话产生过召回。
+其余 17 次压实所在的 4 个会话（`session-5623d58e73f4`、`session-5ea861c9042a`、`session-f99f0e940e56`、`session-1413c3df10e9`）**召回数为 0**。
 
 原因是时间差：这 17 次压实的 mtime 是 2026-10-22 和 11-04，
 而插件是 11-05 才装上的。**插件装上之前发生的压实，不会被观察到。**
@@ -167,7 +167,7 @@ compactions observed: 19 (2 wrote atoms, 17 did not)
 ### C. 压实后的召回保证
 
 当前 `smart` 档在「选不到相关内容」时才升级路由。压实刚发生时恰恰最需要召回 —— 但
-`1d0dc157` 有 26 次召回而 `e5d2208a` 有 6 次压实 0 次召回，说明触发条件不稳定。
+`session-af446fda1e24` 有 26 次召回而 `session-5623d58e73f4` 有 6 次压实 0 次召回，说明触发条件不稳定。
 建议：`compaction/end` 之后的第一个 `agent/pre-step` 强制至少跑一次召回，
 不受 `cooldown` 限制。
 

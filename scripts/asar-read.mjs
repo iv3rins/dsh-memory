@@ -5,8 +5,9 @@
  */
 
 import { openSync, readSync, closeSync } from 'node:fs'
+import { requireAsar } from './asar-locate.mjs'
 
-const ASAR = 'C:\\Users\\iveri\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar'
+const ASAR = requireAsar()
 
 function index() {
   const fd = openSync(ASAR, 'r')

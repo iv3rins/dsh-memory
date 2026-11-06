@@ -130,7 +130,7 @@ export function renderPage(input) {
       <div class="pm-head">
         <div>
           <div class="pm-title">Project memory</div>
-          <div class="pm-sub">D:/iverins_workspace/dsh-memory</div>
+          <div class="pm-sub">/path/to/project</div>
         </div>
       </div>
       <div class="pm-card lead">

@@ -16,7 +16,7 @@
   - `cordis.patch.yml`：本 profile 自己的 YAML 补丁层。
 - **bundle** = 一个 npm 包，其 `package.json` 声明 `dsh.bundle.patch`（一个或有序多个 YAML 文件）。profile 把这些 patch 依次叠在 `@deepseek-ai/dsh-base` 之上。**【实证】**
 - 本机已有三层实例可对照：`dsh-base` + `dsh-web-app`（官方）、`@dsh-external/dsh-blender-plugin`、`@deepseek-ai/dsh-ego-browser`、`@deepseek-ai/dsh-experimental-plugin-market-bundle`。**【实证】**
-- profile 里 `link:` 依赖会变成 junction（如 `desktop/node_modules/@deepseek-ai/dsh-ego-browser → C:\Users\iveri\plugins\dsh-ego-browser`）。**【实证】**
+- profile 里 `link:` 依赖会变成 junction（如 `desktop/node_modules/@deepseek-ai/dsh-ego-browser → <自建插件目录>\dsh-ego-browser`）。**【实证】**
 - 有一个**解析路由层**（`dsh-app-boot` 的 `ResolutionRouter` + `registerHooks`）拦截 profile 目录与 linked root 下的裸模块名，把它路由到安装目录里的同名包。**结论：`link:` 进来的插件可以静态 `import { defineTool } from '@deepseek-ai/dsh-tools'`**——现存两个 linked 插件都这么做且正在运行。**【实证】**
 - 装配时会做**版本准入**：manifest 有 `engines.dsh` 则只看它；否则 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 的每条 `peerDependencies` 都必须与运行版本兼容；不兼容的 bundle 被跳过并记入 `skippedBundles`（不会崩）。**【文档 + 实证 app-boot 源码】**
 - `desktop` profile 被 Electron 独占管理：`dsh --profile desktop --dump-config` 直接报 `profile "desktop" is managed exclusively by the Electron application`。**【实证】** → 桌面端安装走 profile `package.json` 或 `plugin_manager` 工具，不走 CLI。
@@ -149,7 +149,7 @@ projectId = .dsh-memory/project.json 里的 uuid v4（首次 init 生成，永�
 ```
 
 - 判定顺序：显式配置 `projectRoot` → `SessionHeader.cwd` 向上找最近的 `.git` → `cwd` 本身。**【实证：`dsh-skill-filesystem` 用同一规则，说明项目根语义在 DSH 内是一致的】**
-- 已发现的现实问题：**当前工作区 `D:\iverins_workspace\dsh-memory` 不是 git 仓库**（`git rev-parse` 失败）→ 无 git 场景必须是一等公民，不能当异常分支。
+- 已发现的现实问题：**本项目所在目录当时不是 git 仓库**（`git rev-parse` 失败）→ 无 git 场景必须是一等公民，不能当异常分支。
 - `.dsh-memory/project.json` 被移动/复制到别处时，`projectId` 冲突由 `projectInit` 检出并提示（写入 `machineHint`，不自动改）。
 
 ### 4.2 System A —— 文档知识系统（Markdown 为真相源）

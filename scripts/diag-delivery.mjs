@@ -5,6 +5,7 @@
  * instead of guessed. Run: node scripts/diag-delivery.mjs
  */
 
+import path from 'node:path'
 import { readOverrides } from '../core/projects.js'
 import { DEFAULTS, normalizeConfig } from '../core/config.js'
 import { readAtoms } from '../core/memory.js'
@@ -12,7 +13,10 @@ import { gateAtoms, buildQuery, decideRoute } from '../core/gate.js'
 import { listProviders, routerReadiness } from '../lib/delegate.js'
 import { recallForStep } from '../lib/recall.js'
 
-const root = 'D:/iverins_workspace/dsh-memory'
+// The project to diagnose: an explicit argument or `DSH_MEMORY_ROOT` wins, and the
+// default is the checkout this script lives in. An absolute path baked in here used to
+// name one machine's home directory and pointed at nothing on any other machine.
+const root = process.argv[2] ?? process.env.DSH_MEMORY_ROOT ?? path.join(import.meta.dirname, '..')
 const line = (label, value) => console.log(`${label.padEnd(34)} ${value}`)
 
 console.log('=== 1. settings ===')

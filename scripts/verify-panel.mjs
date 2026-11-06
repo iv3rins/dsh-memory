@@ -68,7 +68,7 @@ const page = (css, table) => `<!doctype html><html><meta charset="utf-8"><title>
     <div class="pm-toolbar-main">
       <div class="pm-crumbs"><span class="pm-crumb">Project memory</span><span class="pm-crumb-sep">/</span><span class="pm-crumb-now">dsh-memory</span></div>
       <div class="pm-title">Project memory</div>
-      <div class="pm-sub">D:/iverins_workspace/dsh-memory</div>
+      <div class="pm-sub">/path/to/project</div>
     </div>
     <button class="pm-tbtn">↻ Refresh</button>
     <button class="pm-tbtn">⚙ Settings</button>

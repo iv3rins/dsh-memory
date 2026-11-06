@@ -19,8 +19,9 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { requireAsar } from './asar-locate.mjs'
 
-const ASAR = 'C:\\Users\\iveri\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar'
+const ASAR = requireAsar()
 /** The asar subtree that holds the host's node_modules. */
 const ROOT_PREFIX = 'dsh/node_modules'
 const REPO = path.join(import.meta.dirname, '..')
