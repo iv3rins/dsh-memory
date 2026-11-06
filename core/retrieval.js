@@ -154,7 +154,7 @@ export function recallCandidates(input) {
 
   // The cross-category supplement: a fixed share of the result must come from outside the
   // selected categories, so a wrong classification costs rank instead of losing memory.
-  const reserve = wanted.size === 0
+  const reserve = wanted.size === 0 || input.crossCategorySupplement === false
     ? 0
     : Math.min(outsideCategory.length, Math.max(CROSS_CATEGORY_MIN, Math.floor(limit * CROSS_CATEGORY_SHARE)))
   const categoryBudget = Math.max(0, limit - reserve)

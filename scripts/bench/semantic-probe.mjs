@@ -1,13 +1,12 @@
-// Does category-aware scoring actually recover the answer-holder? Measured, not assumed.
+// Does the real semantic candidate route recover the answer-holder? Measured, not assumed.
 //
-// A design that sounds right and moves nothing is the main risk in this phase, so this
-// compares the same questions, store and limit with the semantic term off and on.
+// This covers static colour derivation from the question, not an explicit Main Agent
+// category choice. Both sides use a fixed clock; only semanticRouting/taskIntent change.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { BENCH } from './lib.mjs'
-import { recallFor } from './memory-arm.mjs'
-import { categoryContext } from '../../core/query-category.js'
+import { BENCH_NOW, intentForQuestion, recallFor } from './memory-arm.mjs'
 
 const RESULTS = path.join(BENCH, 'results')
 const file = process.argv[2] ?? 'phase2-2026-11-06T08-29-09-897Z.jsonl'
@@ -50,12 +49,18 @@ for (const projectId of [...new Set(rows.map((row) => row.project_id))]) {
       counts.total += 1
 
       // Off: the current behaviour.
-      const off = await recallFor(root, question.question, { recallLimit: limit, recallBudget: 4000 })
+      const off = await recallFor(root, question.question, { recallLimit: limit, recallBudget: 4000, now: BENCH_NOW })
       if (off.recall.ok === true && holders.some((id) => (off.recall.ids ?? []).includes(id))) counts.off += 1
 
-      // On: the same call with a category context supplied.
-      const categories = categoryContext({ text: question.question })
-      const on = await recallFor(root, question.question, { recallLimit: limit, recallBudget: 4000, categories })
+      // On: the real candidate-routing path, not a score-only category bonus.
+      const on = await recallFor(root, question.question, {
+        recallLimit: limit,
+        recallBudget: 4000,
+        semanticRouting: true,
+        taskIntentEnabled: true,
+        intent: intentForQuestion(question.question),
+        now: BENCH_NOW,
+      })
       if (on.recall.ok === true && holders.some((id) => (on.recall.ids ?? []).includes(id))) counts.on += 1
     }
     const pct = (value) => `${((value / Math.max(1, counts.total)) * 100).toFixed(1)}%`

@@ -400,6 +400,8 @@ function atom(kind, text, extra = {}) {
   if (recalled.candidates.length > CROSS_CATEGORY_MIN) {
     assert.ok(recalled.crossCategory >= 1, 'an outside-category atom is kept in the candidate set')
   }
+  const strictColors = recallCandidates({ atoms, intent, gate, limit: 4, crossCategorySupplement: false })
+  assert.ok(strictColors.candidates.every((entry) => entry.fromCategory), 'an explicit opt-out really removes the cross-category reserve')
   // Every candidate carries its classification, so a debug view can explain the choice.
   for (const entry of recalled.candidates) {
     assert.ok(Array.isArray(entry.category) && entry.category.length > 0, 'each candidate carries its categories')

@@ -109,8 +109,6 @@ export const DEFAULTS = Object.freeze({
   semanticRouting: false,
   /** Ask the router which categories matter, in addition to which atoms. */
   categoryAwareDigest: true,
-  /** Allow the router to answer with a category selection rather than only atom ids. */
-  categorySelection: true,
   /** Enforce the outside-category reserve so a mis-classification cannot lose memory. */
   crossCategorySupplement: true,
 
@@ -213,7 +211,6 @@ export function normalizeConfig(raw) {
     // --- GC-inspired upgrade switches -------------------------------------------
     semanticRouting: bool(input.semanticRouting, DEFAULTS.semanticRouting),
     categoryAwareDigest: bool(input.categoryAwareDigest, DEFAULTS.categoryAwareDigest),
-    categorySelection: bool(input.categorySelection, DEFAULTS.categorySelection),
     crossCategorySupplement: bool(input.crossCategorySupplement, DEFAULTS.crossCategorySupplement),
     lifecycleEnabled: bool(input.lifecycleEnabled, DEFAULTS.lifecycleEnabled),
     lifecycleAutoSweep: bool(input.lifecycleAutoSweep, DEFAULTS.lifecycleAutoSweep),

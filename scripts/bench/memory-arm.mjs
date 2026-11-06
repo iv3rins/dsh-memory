@@ -14,7 +14,25 @@ import path from 'node:path'
 import { DEFAULTS, normalizeConfig } from '../../core/config.js'
 import { ATOMS_FILE, normalizeAtom, recordAtoms } from '../../core/memory.js'
 import { buildQuery } from '../../core/gate.js'
+import { normalizeTaskIntent } from '../../core/intent.js'
+import { queryCategories } from '../../core/query-category.js'
 import { recallForStep } from '../../lib/recall.js'
+
+export const BENCH_NOW = Date.parse('2026-01-01T00:00:00.000Z')
+
+/** Build the semantic request from the question only; the reference answer never routes. */
+export function intentForQuestion(question, now = BENCH_NOW) {
+  const normalized = normalizeTaskIntent({
+    task_summary: question,
+    project_id: 'bench',
+    operation: 'explain',
+    memory_needs: ['historical_constraints', 'architecture_decisions', 'previous_errors'],
+    categories: queryCategories(String(question)).all,
+    max_memory_tokens: 4000,
+  }, { now: new Date(now).toISOString() })
+  if (normalized.ok !== true) throw new Error(`invalid benchmark intent: ${normalized.reason}`)
+  return normalized.intent
+}
 
 /** A fact extracted from the history, in the shape the plugin stores. */
 export function toAtom(fact) {
@@ -63,11 +81,11 @@ export async function seedStore(root, facts) {
  *
  * @param {string} root - project root holding the atom store.
  * @param {string} question - the request text.
- * @param {{ recallLimit?: number, recallBudget?: number, categories?: object }} [overrides] - per-call overrides.
+ * @param {{ recallLimit?: number, recallBudget?: number, categories?: object, intent?: object, now?: number, standingShare?: number, maxExperts?: number }} [overrides] - per-call overrides.
  * @returns {Promise<{ recall: any, settings: any }>} the recall result and the settings used.
  */
 export async function recallFor(root, question, settingsOverrides = {}) {
-  const { categories, standingShare, ...configOverrides } = settingsOverrides
+  const { categories, intent, now, standingShare, maxExperts, ...configOverrides } = settingsOverrides
   const settings = normalizeConfig({
     ...DEFAULTS,
     routerTier: 'off',
@@ -81,7 +99,10 @@ export async function recallFor(root, question, settingsOverrides = {}) {
     projectId: 'bench',
     routerAvailable: false,
     ...(categories === undefined ? {} : { categories }),
+    ...(intent === undefined ? {} : { intent }),
+    ...(now === undefined ? {} : { now }),
     ...(standingShare === undefined ? {} : { standingShare }),
+    ...(maxExperts === undefined ? {} : { maxExperts }),
   })
   return { recall, settings }
 }

@@ -28,6 +28,7 @@ import { MEMORY_DIR } from './paths.js'
 import { readText, writeTextAtomic, withLock } from './store.js'
 import { tokenize } from './search.js'
 import { stableStringify } from './state.js'
+import { normalizeCategories, resolveCategories } from './category.js'
 
 /** Schema version for one atom record. */
 export const MEMORY_SCHEMA = 1
@@ -227,6 +228,7 @@ export function normalizeAtom(raw, options = {}) {
     text,
     tags: uniqueStrings(Array.isArray(record.tags) ? record.tags : [], 12),
     files: uniqueStrings(Array.isArray(record.files) ? record.files : [], 12).slice(0, 12),
+    category_id: normalizeCategories(record.category_id),
     weight: Math.round(clamp(record.weight, 2, 1, 5)),
     confidence: Math.round(clamp(record.confidence, 0.5, 0, 1) * 100) / 100,
     standing: resolveStanding(kind, record),
@@ -264,6 +266,7 @@ export function mergeAtom(existing, incoming) {
     ...existing,
     tags: uniqueStrings([...existing.tags, ...incoming.tags], 12),
     files: uniqueStrings([...existing.files, ...incoming.files], 12).slice(0, 12),
+    category_id: normalizeCategories([...(existing.category_id ?? []), ...(incoming.category_id ?? [])]),
     weight: Math.max(existing.weight, incoming.weight),
     confidence: Math.max(existing.confidence, incoming.confidence),
     // Standing is sticky in the permissive direction: a rule that ever earned it
@@ -314,6 +317,7 @@ export function readAtoms(root) {
       continue
     }
     const atom = normalizeAtom(parsed)
+    if (atom !== null && atom.category_id.length === 0) atom.category_id = resolveCategories(atom)
     if (atom === null) {
       invalid += 1
       continue

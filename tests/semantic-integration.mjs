@@ -384,6 +384,8 @@ function assembleRequest(stepMessages, injected) {
     })()
     assert.equal(wroteLifecycle, false, 'a recall with the upgrade off writes no lifecycle file')
 
+    assert.equal(recall.gating.selected.some((entry) => entry.reasons.some((reason) => reason.includes('category'))), false, 'off never adds an implicit category score')
+
     line('with the upgrade off the classic path runs and writes nothing new')
   } finally {
     rmSync(root, { recursive: true, force: true })

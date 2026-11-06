@@ -157,7 +157,7 @@ export function intentCategories(intent) {
   const operation = OPERATION_CATEGORY[intent?.operation]
   if (typeof operation === 'string' && operation !== null) derived.push(operation)
   for (const name of Array.isArray(intent?.affectedModules) ? intent.affectedModules : []) {
-    const id = `mod:${name}`
+    const id = `mod:${name.split('/')[0]}`
     if (CATEGORY_IDS.includes(id) && !derived.includes(id)) derived.push(id)
   }
   // A memory-need always implies a domain, because "give me constraints" is a statement

@@ -27,7 +27,7 @@
  * Pure functions; no I/O, no clock.
  */
 
-import { deriveCategories, CATEGORY_CATALOG } from './category.js'
+import { deriveCategories, resolveCategories, CATEGORY_CATALOG } from './category.js'
 
 /** Dimensions whose agreement carries routing signal. `task` is deliberately excluded. */
 export const VOTING_DIMENSIONS = Object.freeze(['mod', 'dom'])
@@ -98,7 +98,7 @@ export function categoryContext(query, options = {}) {
     atomCategories: (atom) => {
       const key = typeof atom?.id === 'string' ? atom.id : null
       if (key !== null && cache.has(key)) return cache.get(key)
-      const derived = deriveCategories(atom, { limit: 6 }).filter((id) => VOTING_DIMENSIONS.includes(DIMENSION_OF.get(id)))
+      const derived = resolveCategories(atom).filter((id) => VOTING_DIMENSIONS.includes(DIMENSION_OF.get(id)))
       if (key !== null) cache.set(key, derived)
       return derived
     },

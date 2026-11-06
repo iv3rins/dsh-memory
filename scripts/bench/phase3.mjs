@@ -6,7 +6,7 @@
  *
  *   A  delivery fix, no semantic term, limit 8           — the shipped behaviour
  *   B  delivery fix, no semantic term, limit 12          — does the slot ceiling matter?
- *   C  delivery fix, semantic term on,  limit 12         — does category help?
+ *   C  delivery fix, semantic candidate routing, limit 12 — does category help?
  *   D  delivery fix, semantic term + standing-share fix  — does pinning crowd out?
  *
  * The oracle arm from Phase 2 is kept as the ceiling reference and is not re-measured here.
@@ -28,13 +28,12 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { BENCH, OUT, MODEL, JUDGE_MODEL, apiKey, answer, compact, estimateTokens, flatten, judge, loadSessions, tailWithin } from './lib.mjs'
+import { BENCH, OUT, apiKey, answer, compact, estimateTokens, flatten, judge, loadSessions } from './lib.mjs'
 import { buildAtoms } from './atoms.mjs'
-import { recallFor, seedStore } from './memory-arm.mjs'
-import { categoryContext } from '../../core/query-category.js'
+import { existsSync } from 'node:fs'
+import { BENCH_NOW, intentForQuestion, recallFor, seedStore } from './memory-arm.mjs'
 import { deliveryReport } from '../../core/delivery.js'
 
-const TAIL_BUDGET = 6000
 const SUMMARY_BUDGET = 2000
 
 const args = process.argv.slice(2)
@@ -48,7 +47,7 @@ const projects = args.includes('--all')
 const questionCount = Number(flag('questions', '40'))
 
 /** The four arms, each a single delta from the previous. */
-const ARMS = [
+export const ARMS = [
   {
     id: 'A',
     label: 'delivery fix, limit 8, no semantic',
@@ -75,6 +74,32 @@ const ARMS = [
     standingShare: 0.25,
   },
 ]
+
+/** Reuse one generated summary for every arm and rerun unless explicitly refreshed. */
+export async function frozenSummary(projectId, transcript, key, options = {}) {
+  const file = path.join(BENCH, 'atoms', `${projectId}-summary.json`)
+  const fingerprint = createHash('sha256').update(JSON.stringify({ transcript, targetTokens: SUMMARY_BUDGET })).digest('hex')
+  if (options.refresh !== true && existsSync(file)) {
+    const cached = JSON.parse(readFileSync(file, 'utf8'))
+    if (cached.fingerprint === fingerprint && typeof cached.summary === 'string') return cached
+  }
+  const generated = await compact(key, transcript, SUMMARY_BUDGET)
+  const frozen = { fingerprint, summary: generated.summary }
+  writeFileSync(file, JSON.stringify(frozen), 'utf8')
+  return frozen
+}
+
+export function recallOptionsFor(arm, question) {
+  return {
+    recallLimit: arm.limit,
+    recallBudget: 4000,
+    now: BENCH_NOW,
+    ...(arm.semantic === true
+      ? { semanticRouting: true, taskIntentEnabled: true, intent: intentForQuestion(question) }
+      : {}),
+    ...(arm.standingShare === undefined ? {} : { standingShare: arm.standingShare }),
+  }
+}
 
 function distinctiveValues(reference) {
   const out = new Set()
@@ -105,7 +130,7 @@ const main = async () => {
     console.log(`\n### ${projectId}: ${chosen.length} questions`)
 
     const transcript = flatten(sessions)
-    const compacted = await compact(key, transcript, SUMMARY_BUDGET)
+    const compacted = await frozenSummary(projectId, transcript, key, { refresh: args.includes('--refresh-summary') })
     const atoms = await buildAtoms(projectId, sessions, key)
     const root = path.join(BENCH, 'plugin-root', `${projectId}-p3`)
     const seeded = await seedStore(root, atoms.map((atom) => ({ kind: atom.kind, text: atom.text, tags: atom.tags })))
@@ -121,13 +146,7 @@ const main = async () => {
       const row = { project_id: projectId, question_id: question.id, category: question.category, arms: {} }
 
       for (const arm of ARMS) {
-        const categories = arm.semantic === true ? categoryContext({ text: question.question }) : undefined
-        const recall = await recallFor(root, question.question, {
-          recallLimit: arm.limit,
-          recallBudget: 4000,
-          ...(categories === undefined ? {} : { categories }),
-          ...(arm.standingShare === undefined ? {} : { standingBudgetShare: arm.standingShare }),
-        })
+        const recall = await recallFor(root, question.question, recallOptionsFor(arm, question.question))
         const recalled = recall.recall
         const selectedIds = recalled.ok === true ? (recalled.ids ?? []) : []
         const block = recalled.ok === true ? recalled.block : ''
@@ -168,6 +187,31 @@ const main = async () => {
         const graded = await judge(key, question.question, reference, answered.answer)
 
         row.arms[arm.id] = {
+          arm: arm.id,
+          label: arm.label,
+          recallLimit: arm.limit,
+          semanticRouting: recall.settings.semanticRouting,
+          taskIntentEnabled: recall.settings.taskIntentEnabled,
+          standingShare: arm.standingShare ?? null,
+          intent: arm.semantic === true ? intentForQuestion(question.question) : null,
+          route: recalled.route ?? null,
+          semantic: recalled.semantic ?? null,
+          recallReason: recalled.ok === true ? recalled.reason : recalled.reason,
+          context,
+          contextFingerprint: createHash('sha256').update(context).digest('hex'),
+          selectedIds,
+          answer: answered.answer,
+          answerRequestFingerprint: answered.requestFingerprint,
+          answerResponseModel: answered.responseModel,
+          answerSystemFingerprint: answered.systemFingerprint,
+          answerRawText: answered.rawText,
+          answerRawJson: answered.rawJson,
+          judgeReason: graded.reason,
+          judgeRequestFingerprint: graded.requestFingerprint,
+          judgeResponseModel: graded.responseModel,
+          judgeSystemFingerprint: graded.systemFingerprint,
+          judgeRawText: graded.rawText,
+          judgeRawJson: graded.rawJson,
           verdict: graded.verdict,
           retrieved,
           holdersKnown: holders.length > 0,
@@ -200,11 +244,12 @@ const main = async () => {
   for (const arm of ARMS) {
     const cells = rows.map((row) => row.arms[arm.id])
     const correct = cells.filter((cell) => cell.verdict === 'CORRECT').length
+    const unresolved = cells.filter((cell) => cell.verdict === 'UNRESOLVED').length
     const known = cells.filter((cell) => cell.holdersKnown === true)
     const retrieved = known.filter((cell) => cell.retrieved === true).length
     const verified = cells.reduce((total, cell) => total + cell.verified, 0)
     const avgTokens = Math.round(cells.reduce((total, cell) => total + cell.contextTokens, 0) / cells.length)
-    console.log([arm.id, `${correct}/${rows.length}`, `${retrieved}/${known.length}`, verified, avgTokens].join('\t'))
+    console.log([arm.id, `${correct}/${rows.length - unresolved} (unresolved ${unresolved})`, `${retrieved}/${known.length}`, verified, avgTokens].join('\t'))
   }
   console.log(`\nwritten: ${file}`)
   console.log('\nLIFECYCLE ARM: not evaluated. The dataset has no real usage events, and')

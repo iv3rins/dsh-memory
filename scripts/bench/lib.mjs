@@ -73,25 +73,42 @@ async function chat(key, messages, options = {}) {
     throw new Error('LLM_BASE_URL is not set; point it at an OpenAI-compatible /v1 endpoint (see docs/design/benchmark-compaction-loss.md)')
   }
   const startedAt = Date.now()
+  const requestBody = {
+    model: options.model ?? MODEL,
+    messages,
+    max_tokens: options.maxTokens ?? 400,
+    temperature: 0,
+    ...(process.env.LLM_SEED === undefined ? {} : { seed: Number(process.env.LLM_SEED) }),
+  }
+  if (Object.hasOwn(requestBody, 'seed') && Number.isSafeInteger(requestBody.seed) !== true) {
+    throw new Error('LLM_SEED must be a safe integer; omit it when the provider does not support seeds')
+  }
+  const body = JSON.stringify(requestBody)
+  const requestFingerprint = createHash('sha256').update(body).digest('hex')
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      model: options.model ?? MODEL,
-      messages,
-      max_tokens: options.maxTokens ?? 400,
-      temperature: 0,
-    }),
+    body,
   })
   const text = await res.text()
   const latencyMs = Date.now() - startedAt
   if (res.ok !== true) throw new Error(`LLM ${res.status}: ${text.slice(0, 200)}`)
-  const json = JSON.parse(text)
+  let json
+  try {
+    json = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`LLM returned invalid JSON: ${error instanceof Error ? error.message : String(error)}; rawText=${text}`)
+  }
   return {
     content: json.choices?.[0]?.message?.content ?? '',
     usage: normalizeUsage(json.usage ?? {}),
     rawUsage: json.usage ?? {},
     latencyMs,
+    requestFingerprint,
+    responseModel: typeof json.model === 'string' ? json.model : null,
+    systemFingerprint: typeof json.system_fingerprint === 'string' ? json.system_fingerprint : null,
+    rawText: text,
+    rawJson: json,
   }
 }
 
@@ -260,19 +277,19 @@ async function compact(key, transcript, targetTokens) {
 
 /** Ask one arm a question. */
 async function answer(key, context, question) {
-  const { content, usage, latencyMs } = await chat(key, [
+  const result = await chat(key, [
     {
       role: 'system',
       content: 'You answer questions about a software project using only the provided context. If the context does not contain the answer, say "I don\'t know". Be concise.',
     },
     { role: 'user', content: `${context}\n\n=== QUESTION ===\n${question}` },
   ], { maxTokens: 300 })
-  return { answer: content.trim(), usage, latencyMs }
+  return { answer: result.content.trim(), usage: result.usage, latencyMs: result.latencyMs, requestFingerprint: result.requestFingerprint, responseModel: result.responseModel, systemFingerprint: result.systemFingerprint, rawText: result.rawText, rawJson: result.rawJson }
 }
 
 /** Judge one answer against the reference. */
 async function judge(key, question, reference, hypothesis) {
-  const { content, usage, latencyMs } = await chat(key, [
+  const result = await chat(key, [
     {
       role: 'system',
       content: 'You grade an answer against a reference answer. Reply with JSON only: {"verdict":"CORRECT"|"PARTIAL"|"WRONG","reason":"<short>"}. CORRECT means the key facts match. PARTIAL means some key facts are right but important detail is missing. WRONG means the key facts are absent or contradicted.',
@@ -282,22 +299,27 @@ async function judge(key, question, reference, hypothesis) {
       content: `QUESTION:\n${question}\n\nREFERENCE:\n${reference}\n\nANSWER BEING GRADED:\n${hypothesis}`,
     },
   ], { model: JUDGE_MODEL, maxTokens: 120 })
-  const match = /\{[\s\S]*\}/.exec(content)
-  let verdict = 'WRONG'
-  let reason = ''
-  if (match !== null) {
-    try {
-      const parsed = JSON.parse(match[0])
-      verdict = String(parsed.verdict ?? 'WRONG').toUpperCase()
-      reason = String(parsed.reason ?? '')
-    } catch {
-      reason = 'unparsable judge reply'
+  let verdict = 'UNRESOLVED'
+  let reason = 'judge reply did not contain a JSON object'
+  let parsed
+  try {
+    const match = /\{[\s\S]*\}/.exec(result.content)
+    if (match !== null) parsed = JSON.parse(match[0])
+  } catch {
+    reason = 'unparsable judge reply'
+  }
+  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (typeof parsed.verdict === 'string' && ['CORRECT', 'PARTIAL', 'WRONG'].includes(parsed.verdict)) {
+      verdict = parsed.verdict
+      reason = typeof parsed.reason === 'string' ? parsed.reason : ''
+    } else {
+      reason = 'invalid judge verdict; expected CORRECT, PARTIAL, or WRONG'
     }
   }
   // Usage and latency are returned because the cost accounting needs the judge too: a
   // report that itemises only the answer calls understates every arm by the same judged
   // call, which still has to be paid for on every question.
-  return { verdict, reason, usage, latencyMs }
+  return { verdict, reason, usage: result.usage, latencyMs: result.latencyMs, requestFingerprint: result.requestFingerprint, responseModel: result.responseModel, systemFingerprint: result.systemFingerprint, rawText: result.rawText, rawJson: result.rawJson }
 }
 
 /** Deterministic sample so a rerun scores the same questions. */
