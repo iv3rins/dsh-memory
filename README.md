@@ -5,7 +5,122 @@
 
 Project-level persistent knowledge and development-state memory for [DeepSeek Harness](https://github.com/deepseek-ai).
 
-An agent forgets everything when a session ends, when the context is compacted, or when you switch branches. For a project that outlives dozens of sessions, that means re-deriving the same decisions, re-reading the same documents, and repeating the same mistakes. This plugin gives a project a memory that lives in the repository instead of in a context window.
+## The problem, in plain terms
+
+An AI coding agent has no memory between sessions. Every conversation starts blank, so:
+
+- you explain the same project structure again;
+- it re-reads the same documents;
+- it re-makes a decision you already settled last week;
+- it repeats a mistake it already hit.
+
+There is also a quieter version of the same problem **inside** one session. When the
+context gets long, the harness compacts it: the original messages are replaced by a
+summary. Context stays affordable, but the summary is lossy — details, exact values and
+the reasoning behind a choice that did not fit are gone for good. On a measured 588 k-token
+history the summary came out at ~2 k tokens, which is not the same information at all.
+
+This plugin gives a project a memory that lives **in the repository**, not in a context
+window.
+
+## How it works
+
+Three storage systems, each with a different job. The split is deliberate: what you
+*wrote*, what you *are doing*, and what you *decided* have different lifetimes, and a
+single blob would serve all three badly.
+
+| system | holds | written by | survives |
+|---|---|---|---|
+| **A — documents** | the Markdown you already have | you, in git | everything |
+| **B — state** | task, progress, blockers, decisions | `state_update` / `state_handoff` | restarts and compactions |
+| **C — atoms** | short durable statements | compaction observer + `memory_remember` | restarts and compactions |
+
+The interesting part is **C**, and how it is read back.
+
+```
+  long session
+        │
+        ├─── context fills ──▶ harness compacts ──▶ summary (lossy)
+        │                                              │
+        │                                              └──▶ what the model sees now
+        │
+        └─── each compaction also writes short atoms ──▶ .dsh-memory/memory/atoms.jsonl
+                                                              │
+   next request ──▶ match the request against the store ──────┘
+                        │
+                        └──▶ a few atoms that fit the budget, not the whole store
+```
+
+Four properties make that cheap enough to run every step:
+
+1. **Sparse, not dumped.** A handful of atoms out of hundreds, ranked for *this* request.
+   A hard token ceiling applies, so cost is bounded by configuration rather than by
+   project size.
+2. **Recorded, not scraped.** System B is written by tool calls. An agent that never calls
+   `state_update` gets no state memory — the plugin does not silently harvest your
+   conversation.
+3. **Rules outrank relevance.** An atom carrying a hard constraint is selected *before*
+   any scoring runs, and a router cannot remove it. A rule that only applies when you
+   happen to mention it is not a rule.
+4. **Selection never writes.** The optional router subagent may only answer with ids that
+   were offered to it; an id it invents is discarded. Memory mutation stays with
+   deterministic code, so a hallucination cannot corrupt the store.
+
+A subagent can act as that router when lexical matching is not enough. It is off by
+default (`smart` with no model configured costs nothing).
+
+## Measured: what compaction loses, and what recall buys back
+
+Numbers below come from a real run on
+[CodeMemo](https://huggingface.co/datasets/laynepro/codememo-benchmark), 40 questions per
+project, model and judge `deepseek-v4.1-flash`, temperature 0. Three arms see the same
+question; only the history differs.
+
+| arm | context given to the model |
+|---|---|
+| **A** | the compaction summary only (~1.3 k / ~2.0 k tokens) |
+| **B** | the last 6 k tokens of raw transcript |
+| **C** | the same summary, plus the atoms recalled (~0.4 k tokens) |
+
+Pooled over 80 questions:
+
+| arm | correct | 95% CI | partial credit |
+|---|---|---|---|
+| A — summary only | 16.3% | 9.7–25.8% | 32.5% |
+| B — tail only | 15.0% | 8.8–24.4% | 20.0% |
+| **C — summary + recall** | **25.0%** | 16.8–35.5% | **41.9%** |
+
+| comparison | difference | 95% CI |
+|---|---|---|
+| C − A | **+8.8 pp** | −0.7 … +18.2 |
+| C − B | **+10.0 pp** | −1.0 … +21.0 |
+| B − A | −1.3 pp | −10.7 … +8.2 |
+
+Split by history length, which is where the shape of the problem becomes visible:
+
+| project | history | A | B | C |
+|---|---|---|---|---|
+| `project_01` | 17 k tokens | 30.0% | 30.0% | **40.0%** |
+| `project_02` | 588 k tokens | 2.5% | 0.0% | **10.0%** |
+
+**Read this honestly.**
+
+- When the history nearly fits (17 k tokens), a summary is *as good as* the raw recent
+  text: A and B are identical at 30.0%. Compaction is not the bottleneck there.
+- When it does not fit (588 k tokens), every arm collapses — and memory collapses least
+  slowly. The absolute numbers are low for all three.
+- **The confidence intervals include zero.** +8.8 pp with an interval of −0.7 … +18.2 is
+  consistent with anything from no effect to a ~18-point effect. Two projects and the
+  partial-credit score all lean the same way, which is reason to run a larger sample —
+  not reason to quote a number as established.
+- Recall still improves *partial* answers (32.5% → 41.9%), i.e. context gets closer to
+  sufficient without becoming sufficient.
+
+What this does **not** measure: routing quality (`routerTier: 'off'`), or "how much text
+compaction permanently destroys" — every question's answer exists somewhere in the raw
+transcript, so the measured quantity is *retrievability under a budget*. Full method,
+per-question data, and the defects found while building it:
+[`docs/design/benchmark-compaction-loss.md`](./docs/design/benchmark-compaction-loss.md).
 
 It is a **host-only [cordis](https://github.com/deepseek-ai/cordis) plugin**: it registers agent tools, a system-prompt section, and slash commands. It also ships one small **Client half** — a sidebar panel, which reads the host over two loopback routes and adds nothing to the host's work. No change to DSH itself.
 
@@ -17,6 +132,9 @@ MIT licensed · Node 20+ · host-only plugin + one sidebar panel
 
 ## Contents
 
+- [The problem, in plain terms](#the-problem-in-plain-terms)
+- [How it works](#how-it-works)
+- [Measured: what compaction loses, and what recall buys back](#measured-what-compaction-loses-and-what-recall-buys-back)
 - [Three systems, on purpose](#three-systems-on-purpose)
 - [What it will not do](#what-it-will-not-do)
 - [Install](#install)
@@ -33,11 +151,15 @@ MIT licensed · Node 20+ · host-only plugin + one sidebar panel
 
 ## Three systems, on purpose
 
+The table in [How it works](#how-it-works) states what each system is *for*. This
+section states the design decisions behind them, which is where the disagreements usually
+are.
+
 **System A — documentation knowledge.** Markdown in the repository is the source of truth. The plugin indexes it, searches it, and reads named sections. It never rewrites your authoritative docs; when it proposes a change it writes to `docs/proposals/`.
 
-**System B — development state.** Task, progress, blockers, decisions, next steps, git facts, and handoff notes are persisted by a tool call, so they survive a restart or a compaction. **The tool call is what persists.** An agent that never calls `state_update` gets no state memory — the plugin does not scrape conversation.
+**System B — development state.** Persisted only by a tool call. The rule is that the plugin never scrapes a conversation to guess what you are doing: an agent that does not call `state_update` gets no state memory, which is a visible failure rather than a quietly wrong one.
 
-**System C — memory atoms.** Durable, addressable records extracted from compaction summaries and from rules the user states outright, then *selectively* recalled into the next request. This is the answer to compaction loss: a checkpoint summary replaces the original turns, and everything it drops is gone. Atoms give that content a second life, outside the context window, retrievable by relevance rather than by being lucky enough to have survived the summary.
+**System C — memory atoms.** Extracted from compaction summaries and from rules the user states outright, then *selectively* recalled into the next request. A checkpoint summary replaces the original turns, and everything it drops is gone; atoms give that content a second life outside the context window, retrieved by relevance rather than by having been lucky enough to survive the summary. [Measured above](#measured-what-compaction-loses-and-what-recall-buys-back): +8.8 pp on answered questions, and a much larger effect on a 588 k-token history than on a 17 k-token one.
 
 Recall follows a sparse-gating pattern rather than a dump. Scoring is deterministic (lexical overlap, kind priority, reinforcement, recency), the selection is sparse (few atoms out of many, ranked), and the cost is bounded (a hard token ceiling). That is the MemGPT arrangement — the context window as working memory, the store as the larger memory space, exchanged on demand — expressed as a mixture-of-experts gate: kinds are experts, atoms compete within an expert, and the softmax decides which experts are active for *this* request.
 

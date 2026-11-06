@@ -34,6 +34,13 @@ tmp-*.txt
 # compaction-trace-audit.md). ~88 MB of raw conversation, never committed.
 _audit/
 
+# Benchmark inputs and outputs (docs/design/benchmark-compaction-loss.md).
+# ~690 MB: the CodeMemo transcripts (~277 MB), the extracted atom store, every run's
+# per-question transcript, and the atom-extraction cache. The *results* that matter are
+# summarised in the design doc; the corpus is a download, not source.
+# `scripts/bench/` itself is committed — the method must be reproducible.
+_bench/
+
 # --- This plugin's own runtime output ----------------------------------------
 # `.dsh-memory/` is what the plugin *writes* while doing its job, not what it is:
 # project state, the document index, and the memory atom store. It is meaningful
