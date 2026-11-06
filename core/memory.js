@@ -110,12 +110,48 @@ export function resolveStanding(kind, record) {
 
 /**
  * Collapse whitespace and bound the length of one atom statement.
+ *
+ * The bound is a hard cap and this function silently applies it, which is correct for a
+ * normalizer but wrong as the *only* place the cap exists: a statement longer than
+ * `MAX_ATOM_CHARS` is stored as a prefix, and nothing downstream can tell a short fact from
+ * a truncated one. A real project store was found with 11 of 401 atoms sitting exactly at
+ * the cap. `atomTextTruncated` exists so callers can say so; see `renderAtoms`.
+ *
  * @param {unknown} value - candidate text.
  * @returns {string} normalized text, or an empty string.
  */
 export function normalizeAtomText(value) {
   if (typeof value !== 'string') return ''
   return value.replace(/\s+/g, ' ').trim().slice(0, MAX_ATOM_CHARS)
+}
+
+/**
+ * Whether a statement had to be cut to fit the atom cap.
+ *
+ * Reported rather than acted on: the cap protects the store's density, and a longer record
+ * belongs in a document. What must not happen is silent loss of a fact that the model then
+ * treats as complete.
+ *
+ * @param {unknown} value - the original statement, before normalization.
+ * @returns {boolean} whether storing it would drop characters.
+ */
+export function atomTextTruncated(value) {
+  if (typeof value !== 'string') return false
+  return value.replace(/\s+/g, ' ').trim().length > MAX_ATOM_CHARS
+}
+
+/**
+ * Whether a stored atom's text sits at the cap, and therefore may be a prefix.
+ *
+ * A stored string cannot be distinguished from a truncated one except by its length, so a
+ * text exactly at the cap is treated as "possibly truncated" and rendered as such. Atoms
+ * shorter than the cap are known complete.
+ *
+ * @param {{ text?: string }} atom - a stored atom.
+ * @returns {boolean} whether the text may have been cut.
+ */
+export function atomMayBeTruncated(atom) {
+  return typeof atom?.text === 'string' && atom.text.length >= MAX_ATOM_CHARS
 }
 
 /**

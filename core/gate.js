@@ -26,7 +26,7 @@
  */
 
 import { tokenize } from './search.js'
-import { atomTokens } from './memory.js'
+import { atomTokens, MAX_ATOM_CHARS } from './memory.js'
 import { estimateTokens } from './context.js'
 
 /** Scoring weights. Every one of these is a deliberate, documented choice. */
@@ -45,6 +45,22 @@ export const GATE_WEIGHTS = Object.freeze({
   confidence: 4,
   /** Recency: worth this much at zero age, decaying to nothing over the half-life. */
   recency: 4,
+  /**
+   * Sharing a category with the request's own categories.
+   *
+   * This is the semantic term. Lexical overlap cannot match "which env var sets the
+   * timeout" to an atom about `TASKCTL_TIMEOUT` if the words differ, but both land in
+   * `dom:storage`. Measured on the long project, adding this lifted the share of questions
+   * whose answer-holder reached the final selection from 31.6% to 45% at the same limit —
+   * see docs/design/benchmark-phase3-ranking.md.
+   *
+   * Deliberately smaller than `rareOverlap`: a category is eight-or-so buckets, so it
+   * carries far less information than a rare token, and weighting it higher would let a
+   * broad category outrank a precise lexical match.
+   */
+  category: 4.5,
+  /** A category the request names explicitly, which is stronger evidence than a guess. */
+  categoryExplicit: 3,
 })
 
 /** Age at which the recency term is worth half its weight, in days. */
@@ -183,12 +199,46 @@ export function scoreAtom(atom, query, context) {
   const recency = recencyFactor(atom.updatedAt, context.now)
   score += recency * GATE_WEIGHTS.recency
 
+  /*
+   * Category agreement: the semantic term.
+   *
+   * The query surface carries the categories of the *request*, derived from its own text.
+   * An atom that shares one is about the same kind of thing even when the words differ,
+   * which is the gap lexical scoring cannot close. This is only ever used when the caller
+   * supplied a category set, so a caller that does not know about categories sees exactly
+   * the score it saw before.
+   *
+   * Two separate weights: `categoryExplicit` for a category the request named outright
+   * (which the router or a tool set deliberately), and `category` for one inferred from the
+   * request's wording.
+   */
+  const queryCategories = context.categories ?? null
+  let sharedCategories = []
+  if (queryCategories !== null) {
+    const explicit = queryCategories.explicit ?? []
+    const inferred = queryCategories.inferred ?? []
+    const atomCategories = queryCategories.atomCategories?.(atom) ?? []
+    const explicitShared = atomCategories.filter((id) => explicit.includes(id))
+    const inferredShared = atomCategories.filter((id) => inferred.includes(id) && explicit.includes(id) === false)
+    sharedCategories = [...new Set([...explicitShared, ...inferredShared])]
+    if (explicitShared.length > 0) {
+      score += Math.min(explicitShared.length, 3) * GATE_WEIGHTS.categoryExplicit
+      reasons.push(`category named: ${explicitShared.join(', ')}`)
+    }
+    if (inferredShared.length > 0) {
+      score += Math.min(inferredShared.length, 3) * GATE_WEIGHTS.category
+      reasons.push(`category match: ${inferredShared.join(', ')}`)
+    }
+  }
+
   // An atom that matches nothing in the query still competes on kind and
   // reinforcement, but it must not outrank one that does. Flooring the unmatched
   // region keeps the ordering honest without discarding durable memory.
-  if (overlap.length === 0) score *= 0.35
+  // A category match counts as a match: the whole point of the semantic term is to reach
+  // an atom whose wording differs from the request.
+  if (overlap.length === 0 && sharedCategories.length === 0) score *= 0.35
 
-  return { score: Math.round(score * 1000) / 1000, overlap, reasons }
+  return { score: Math.round(score * 1000) / 1000, overlap, reasons, categories: sharedCategories }
 }
 
 /**
@@ -245,11 +295,11 @@ export function gateAtoms(input) {
   const live = input.atoms.filter((atom) => atom.forgotten !== true)
 
   const statistics = documentFrequency(live)
-  const context = { statistics, now, priorities }
+  const context = { statistics, now, priorities, ...(input.categories === undefined ? {} : { categories: input.categories }) }
 
   const scored = live.map((atom) => {
     const result = scoreAtom(atom, input.query, { ...context, now: Date.parse(nowIso) })
-    return { atom, score: result.score, overlap: result.overlap, reasons: result.reasons }
+    return { atom, score: result.score, overlap: result.overlap, reasons: result.reasons, categories: result.categories ?? [] }
   })
 
   // The expert logit is the strength of the group's best atoms, with a small
@@ -305,12 +355,19 @@ export function gateAtoms(input) {
 
   /**
    * Take one scored atom if it fits, recording why not when it does not.
+   *
+   * The count limit is a *ceiling*, not a quota. A budget with room for twelve atoms and a
+   * ceiling of eight used to emit eight and leave the remaining budget unspent, which on a
+   * 588k-token history was exactly where the answer-holder was being dropped. The ceiling
+   * still exists so a store of very short atoms cannot fill a prompt with hundreds of
+   * fragments, but the walk continues while there is budget, up to that ceiling.
+   *
    * @param {{ atom: object, score: number, reasons: string[] }} entry - the candidate.
    * @returns {boolean} whether it was taken.
    */
   const take = (entry) => {
     if (selected.length >= limit) {
-      excluded.push({ atom: entry.atom, score: entry.score, reasons: ['over the per-call atom limit'] })
+      excluded.push({ atom: entry.atom, score: entry.score, reasons: [`over the ${limit}-atom ceiling`] })
       return false
     }
     const cost = estimateTokens(entry.atom.text) + 2
@@ -345,8 +402,14 @@ export function gateAtoms(input) {
    * these atoms against each other; it no longer decides whether a genuine rule is
    * treated as a rule at all.
    */
-  const standingCap = Math.max(1, Math.min(limit, Math.floor(limit * STANDING_BUDGET_SHARE) + 1))
-  const standingBudget = Math.max(1, Math.floor(budget * STANDING_BUDGET_SHARE))
+  // The share is a parameter so the crowding-out question can be measured instead of
+  // argued about: a store full of pinned rules is exactly the case where a fixed 0.4 has to
+  // be justified rather than assumed. Defaults to the shipped constant.
+  const standingShare = typeof input.standingShare === 'number'
+    ? Math.min(1, Math.max(0, input.standingShare))
+    : STANDING_BUDGET_SHARE
+  const standingCap = Math.max(1, Math.min(limit, Math.floor(limit * standingShare) + 1))
+  const standingBudget = Math.max(1, Math.floor(budget * standingShare))
   const standing = scored
     .filter((entry) => entry.atom.standing === true)
     .sort((left, right) => right.score - left.score)
@@ -485,15 +548,27 @@ export function decideRoute(input) {
 export function renderAtoms(input) {
   if (input.selected.length === 0) return ''
   const lines = [input.header ?? 'Recalled project memory (durable atoms, ranked for this request):']
+  let truncated = 0
   for (const entry of input.selected) {
     const atom = entry.atom
+    // A statement stored at the cap may be a prefix. Saying so is the difference between a
+    // model that knows a fact may be incomplete and one that reads a cut sentence as the
+    // whole rule — the failure mode a silent cap creates.
+    const mayBeTruncated = typeof atom.text === 'string' && atom.text.length >= MAX_ATOM_CHARS
+    if (mayBeTruncated) truncated += 1
     const provenance = [
       atom.kind,
       atom.source.compactionId === null ? null : 'from a compaction summary',
       entry.reasons.includes('standing rule: kept regardless of wording') ? 'standing rule' : null,
       `score ${entry.score.toFixed(2)}`,
+      mayBeTruncated ? `possibly truncated at ${MAX_ATOM_CHARS} chars` : null,
     ].filter((part) => part !== null)
     lines.push(`- ${atom.text} [${provenance.join('; ')}]`)
+  }
+  // One line of disclosure for the whole block, so the count is visible without reading
+  // every atom's provenance tag.
+  if (truncated > 0) {
+    lines.push(`(${truncated} of ${input.selected.length} atom(s) reached the ${MAX_ATOM_CHARS}-character store cap and may be incomplete; use memory_read for the full record)`)
   }
   return lines.join('\n')
 }

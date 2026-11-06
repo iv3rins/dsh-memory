@@ -246,7 +246,16 @@ const main = async () => {
       const recall = await recallFor(storeRoot, question.question)
       const recalled = recall.recall
       const selectedIds = recalled.ok === true ? (recalled.ids ?? []) : []
-      const deliveredText = (recalled.ok === true ? recalled.block : '').toLowerCase()
+
+      // The text the model is actually given. This must be the assembled context, not just
+      // the recall block: Phase 2 originally measured delivery against `recalled.block`
+      // alone while handing the model the summary *plus* that block, which produced 13
+      // false DELIVERY_FAILURE labels. A fact delivered by the summary counted as missing.
+      const context = recalled.ok === true
+        ? `=== PROJECT NOTES (compacted) ===\n${compacted.summary}\n\n${recalled.block}`
+        : `=== PROJECT NOTES (compacted) ===\n${compacted.summary}`
+      const deliveredText = context.toLowerCase()
+      const recallBlockText = (recalled.ok === true ? recalled.block : '').toLowerCase()
 
       // Candidate set: what the gate considered before the final cut.
       const candidateIds = recalled.ok === true && recalled.gating !== undefined
@@ -262,10 +271,6 @@ const main = async () => {
         ? stronglyCovered(oracle.text.toLowerCase(), values)
         : false
 
-      const context = recalled.ok === true
-        ? `=== PROJECT NOTES (compacted) ===\n${compacted.summary}\n\n${recalled.block}`
-        : `=== PROJECT NOTES (compacted) ===\n${compacted.summary}`
-
       const answered = await answer(key, context, question.question)
       const graded = await judge(key, question.question, reference, answered.answer)
 
@@ -280,15 +285,17 @@ const main = async () => {
         oracleHasValue,
       })
 
-      // A delivered id is one whose own text is actually present in the rendered block.
-      // Equating "selected" with "delivered" would have hidden every case where the block
-      // was truncated, which is the failure this field exists to expose.
+      // A delivered id is one whose own text is present in the recall block. Note the
+      // distinction from `deliveredText`: an atom is "rendered" by the recall block, while
+      // a fact is "delivered to the model" if it appears anywhere in the assembled context,
+      // including the summary. Conflating those two questions is what made the delivery
+      // count wrong.
       const deliveredIds = selectedIds.filter((id) => {
         const atom = storedAtoms.find((entry) => entry.id === id)
         if (atom === undefined) return false
         // Compare a distinctive slice, not the whole sentence: the renderer may wrap it.
         const probe = atom.text.toLowerCase().slice(0, 60)
-        return probe.length > 0 && deliveredText.includes(probe)
+        return probe.length > 0 && recallBlockText.includes(probe)
       })
 
       // --- Oracle arm: same model, temperature, judge, question. Evidence only.

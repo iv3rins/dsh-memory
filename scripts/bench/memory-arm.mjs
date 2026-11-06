@@ -57,13 +57,22 @@ export async function seedStore(root, facts) {
  * `routerTier: 'off'` is deliberate: the router subagent is not part of this question
  * (the user asked about compaction loss, not routing quality), and turning it on would
  * make the run depend on a second model call whose effect would be unmeasured.
+ *
+ * `settingsOverrides.categories` is passed through to `gateAtoms` rather than into the
+ * config normalizer, because a category context is per-request data, not a setting.
+ *
+ * @param {string} root - project root holding the atom store.
+ * @param {string} question - the request text.
+ * @param {{ recallLimit?: number, recallBudget?: number, categories?: object }} [overrides] - per-call overrides.
+ * @returns {Promise<{ recall: any, settings: any }>} the recall result and the settings used.
  */
 export async function recallFor(root, question, settingsOverrides = {}) {
+  const { categories, standingShare, ...configOverrides } = settingsOverrides
   const settings = normalizeConfig({
     ...DEFAULTS,
     routerTier: 'off',
     injectRecall: true,
-    ...settingsOverrides,
+    ...configOverrides,
   })
   const recall = await recallForStep({
     root,
@@ -71,6 +80,8 @@ export async function recallFor(root, question, settingsOverrides = {}) {
     query: buildQuery([question]),
     projectId: 'bench',
     routerAvailable: false,
+    ...(categories === undefined ? {} : { categories }),
+    ...(standingShare === undefined ? {} : { standingShare }),
   })
   return { recall, settings }
 }
