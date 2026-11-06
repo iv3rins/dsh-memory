@@ -112,6 +112,90 @@ try {
   assert.match(payload2.content, /no art/, 'and the blockers')
   assert.notEqual(after.identity, snapshot.identity, 'a state write changes the identity so the next step resends')
 
+  // --- Every injected message must survive the harness's JSON admission check ---
+  // This is not a style assertion. The harness snapshots each message before
+  // appending it and rejects the *entire step* when any value is `undefined`
+  // (`session event "user/message" carries non-JSON-serializable data`). A live
+  // session died exactly here: one step injected the baseline, then the
+  // post-compaction manifest, whose payload carries `text` instead of `content`
+  // and no `identity`. Reading the baseline fields for both shapes produced
+  // `text: undefined` and `baselineIdentity: undefined`, so the manifest append
+  // threw and the turn ended with that error. Checking with the harness's own
+  // predicate is what makes that class of defect fail here instead of in a
+  // user's session.
+  const { snapshotJsonValue } = await import('@deepseek-ai/dsh-util-values').catch((error) => {
+    if (error.code === 'ERR_MODULE_NOT_FOUND') return { snapshotJsonValue: null }
+    throw error
+  })
+  /** Assert one message is losslessly JSON-serializable. */
+  const assertAdmissible = (candidate, label) => {
+    assert.equal(typeof candidate.content?.[0]?.text, 'string', `${label}: the text block is a real string`)
+    assert.equal(
+      Object.values(candidate.source ?? {}).some((value) => value === undefined),
+      false,
+      `${label}: no source field is undefined`,
+    )
+    if (snapshotJsonValue === null) return
+    assert.notEqual(snapshotJsonValue(candidate), undefined, `${label}: the harness would accept this event`)
+  }
+
+  assertAdmissible(message, 'baseline')
+
+  // The manifest is the shape that broke: same helper, different payload.
+  // It only renders when the store holds atoms, so write one first.
+  const { renderMemoryManifest } = await import('../lib/semantic.js')
+  const { ATOMS_FILE, normalizeAtom } = await import('../core/memory.js')
+  const atomRecord = normalizeAtom({
+    kind: 'constraint',
+    text: 'Never rewrite AGENTS.md in place.',
+    weight: 3,
+    confidence: 0.9,
+    tags: [],
+    files: [],
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  }, { now: '2026-11-01T00:00:00.000Z' })
+  assert.ok(atomRecord !== null, 'the fixture atom is a valid record')
+  mkdirSync(path.join(root, path.dirname(ATOMS_FILE)), { recursive: true })
+  writeFileSync(path.join(root, ATOMS_FILE), `${JSON.stringify(atomRecord)}\n`, 'utf8')
+  const manifest = renderMemoryManifest({ root, settings })
+  assert.equal(manifest.ok, true, 'a manifest renders for a project with atoms')
+  const manifestMessage = createInjectionMessage({
+    payload: { form: 'memory-manifest', text: manifest.text, tier: 'manifest', tokens: 1 },
+    snapshot,
+  })
+  assert.equal(manifestMessage.source?.form, 'memory-manifest', 'the manifest keeps its own form')
+  assert.equal('baselineIdentity' in manifestMessage.source, false, 'a manifest claims no baseline identity')
+  assertAdmissible(manifestMessage, 'memory-manifest')
+
+  // An uninitialized project has no project id and no state; that message must also
+  // be admissible, because it is the first thing a new user ever receives.
+  const uninitializedPayload = composePayload({ snapshot: { ok: true, uninitialized: true, root, git: { kind: 'absent' } }, settings, form: 'baseline' })
+  const uninitializedMessage = createInjectionMessage({ payload: uninitializedPayload, snapshot: { root, git: { kind: 'absent' } } })
+  assertAdmissible(uninitializedMessage, 'uninitialized')
+
+  // Recall is the third injected shape, and the one that runs on almost every step,
+  // so it gets the same check. `route` and `confidence` are what the source carries
+  // beyond text; a router result adds a nested object and stays admissible.
+  const { createRecallMessage } = await import('../lib/inject.js')
+  const recall = {
+    ok: true,
+    block: 'Recalled project memory (durable atoms):\n- aaaa [constraint] never rewrite AGENTS.md',
+    route: 'subagent',
+    reason: 'the constraint governs this request',
+    tier: 'recall/always',
+    atoms: 1,
+    tokens: 12,
+    confidence: 'routed',
+    ids: [atomRecord.id],
+    router: { ok: true, ids: 1, cold: 0, rejected: 0, digestTokens: 100, reason: 'x' },
+  }
+  assertAdmissible(createRecallMessage({ recall, root, identity: 'deadbeef' }), 'recall/routed')
+  assertAdmissible(
+    createRecallMessage({ recall: { ...recall, route: 'deterministic', confidence: 'weak', router: undefined }, root }),
+    'recall/deterministic',
+  )
+
   // --- The uninitialized project is told what to do, not silently ignored ---
   const emptyRoot = mkdtempSync(path.join(tmpdir(), 'pm-inject-empty-'))
   try {
