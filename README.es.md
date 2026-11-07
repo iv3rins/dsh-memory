@@ -2,350 +2,191 @@
 
 **Idiomas:** [English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · Español
 
-
-Conocimiento persistente a nivel de proyecto y memoria del estado de desarrollo para [DeepSeek Harness](https://github.com/deepseek-ai).
-
-Un agente lo olvida todo cuando termina una sesión, cuando se compacta el contexto o cuando cambias de rama. Para un proyecto que sobrevive a decenas de sesiones, eso significa volver a deducir las mismas decisiones, releer los mismos documentos y repetir los mismos errores. Este plugin le da a un proyecto una memoria que vive **en el repositorio en lugar de en una ventana de contexto**.
-
-Es un **plugin de [cordis](https://github.com/deepseek-ai/cordis) centrado en el host**: registra herramientas de agente, una sección del system prompt y comandos de barra. También incluye una pequeña **mitad de navegador**: un panel en la barra lateral que lee el host por dos rutas de loopback y no añade trabajo al host. No modifica DSH.
+Memoria de proyecto para [DeepSeek Harness](https://github.com/deepseek-ai): tus documentos, tu estado de desarrollo y átomos de memoria duraderos que sobreviven a reinicios y a la compactación del contexto. Un plugin cordis solo del lado del host, más un panel lateral.
 
 ```
-Licencia MIT · Node 20+ · plugin de host + un panel lateral
+MIT · Node 20+ · sin dependencias en tiempo de ejecución
 ```
 
----
+## El problema
 
-## Índice
+Un agente empieza cada sesión en blanco. Así que vuelves a explicar la estructura, vuelve a leer los mismos documentos, vuelve a tomar una decisión que cerraste la semana pasada y repite un error que ya cometió.
 
-- [Tres sistemas, a propósito](#tres-sistemas-a-propósito)
-- [Lo que no hará](#lo-que-no-hará)
-- [Instalación](#instalación)
-- [Herramientas](#herramientas)
-- [Estructura de almacenamiento](#estructura-de-almacenamiento)
-- [Verificación](#verificación)
-- [Configuración](#configuración)
-- [Ajustes por proyecto](#ajustes-por-proyecto)
-- [Estructura del proyecto](#estructura del proyecto)
-- [Limitaciones conocidas](#limitaciones-conocidas)
-- [Licencia](#licencia)
+Dentro de una misma sesión lo mismo ocurre de forma más silenciosa. Cuando el contexto se alarga, el harness lo compacta: los turnos originales se sustituyen por un resumen. El contexto sigue siendo asequible, y todo lo que el resumen omitió se pierde para siempre.
 
----
+Este plugin da al proyecto una memoria guardada **en el repositorio**, no en una ventana de contexto.
 
+## Cómo funciona
 
-## Tres sistemas, a propósito
+Tres almacenes, porque lo que *escribiste*, lo que *estás haciendo* y lo que *decidiste* tienen vidas distintas:
 
-**Sistema A — conocimiento documental.** El Markdown del repositorio es la fuente de verdad. El plugin lo indexa, lo busca y lee secciones concretas. Nunca reescribe tus documentos autorizados; cuando propone un cambio, escribe en `docs/proposals/`.
+| sistema | guarda | lo escribe | sobrevive a |
+|---|---|---|---|
+| **A — documentos** | tu Markdown | tú, en git | todo |
+| **B — estado** | tarea, progreso, bloqueos, decisiones | `state_update` / `state_handoff` | reinicios, compactación |
+| **C — átomos** | afirmaciones duraderas y breves | el observador de compactación, `memory_remember` | reinicios, compactación |
 
-**Sistema B — estado de desarrollo.** Tarea, progreso, bloqueos, decisiones, siguientes pasos, datos de git y notas de traspaso se persisten mediante una llamada a herramienta, así que sobreviven a un reinicio o a una compactación. **La llamada a la herramienta es lo que persiste.** Un agente que nunca llama a `state_update` no obtiene memoria de estado: el plugin no escarba en la conversación.
+El interesante es **C**:
 
-**Sistema C — átomos de memoria.** Registros durables y direccionables, extraídos de los resúmenes de compactación y de las reglas que el usuario declara explícitamente, y luego recordados **de forma selectiva** en la siguiente petición. Esta es la respuesta a la pérdida por compactación: un resumen de punto de control reemplaza los turnos originales, y todo lo que descarta desaparece. Los átomos le dan a ese contenido una segunda vida, fuera de la ventana de contexto, recuperable por relevancia en lugar de por la suerte de haber sobrevivido al resumen.
+```
+sesión larga ──▶ compactación ──▶ resumen con pérdida (lo que el modelo ve después)
+                      │
+                      └──▶ átomos breves ──▶ .dsh-memory/memory/atoms.jsonl
+                                                    │
+siguiente paso ──▶ selección dispersa para ESTA petición ──┘
+                   └──▶ unos pocos átomos, dentro de un techo de tokens
+```
 
-El recuerdo sigue un patrón de compuerta dispersa en vez de un volcado. La puntuación es determinista (solapamiento léxico, prioridad de tipo, refuerzo, recencia), la selección es dispersa (pocos átomos entre muchos, ordenados) y el coste está acotado (un techo de tokens que quien llama no puede exceder por accidente). Es el planteamiento de MemGPT —la ventana de contexto como memoria de trabajo, el almacén como el espacio de memoria mayor, intercambiados bajo demanda— expresado como una compuerta de mezcla de expertos: los tipos son expertos, los átomos compiten dentro de un experto, y el softmax decide qué expertos están activos para **esta** petición.
+Cuatro propiedades lo abaratan lo suficiente para ejecutarlo en cada paso:
 
-Un subagente puede actuar como enrutador cuando la puntuación léxica no basta. Tres niveles:
+1. **Disperso, no volcado.** Un puñado de átomos entre cientos, ordenados para *esta* petición. Un techo duro de tokens hace que el coste lo fije la configuración y no el tamaño del proyecto.
+2. **Registrado, no recolectado.** El estado y los átomos los escriben llamadas a herramientas. Un agente que nunca llama a `state_update` no tiene memoria de estado: un fallo visible, no un error silencioso. La única excepción deliberada es el observador de compactación, que lee resúmenes de compactación: exactamente lo que el sistema C existe para rescatar.
+3. **Las reglas pesan más que la relevancia.** Un átomo `constraint` es **permanente** (*standing*): se selecciona antes de cualquier puntuación y se conserva aunque la redacción de la petición no coincida. Una regla que solo se aplica cuando casualmente la mencionas no es una regla.
+4. **La selección nunca escribe.** El subagente router opcional solo puede responder con ids que se le ofrecieron; un id inventado se descarta. La mutación queda en código determinista.
 
-| `routerTier` | Comportamiento | Coste |
-| --- | --- | --- |
-| `off` | Solo compuerta determinista. | Gratis |
-| `smart` (por defecto) | Compuerta determinista, escalando al enrutador solo cuando no seleccionó nada relevante o coincidió débilmente. | Casi gratis; una llamada solo cuando la ruta barata falló |
-| `always` | Cada paso pregunta al subagente enrutador. | Una llamada por paso — úsalo con un modelo barato |
+### Niveles del router
 
-`smart` no cuesta nada hasta que `routerProvider` **y** `routerModel` estén ambos definidos, así que el plugin no gasta ninguna llamada al modelo recién instalado.
+| `routerTier` | comportamiento | coste |
+|---|---|---|
+| `off` | solo puntuación determinista | gratis |
+| `smart` (por defecto) | escala solo cuando la pasada determinista no halló nada relevante o coincidió débilmente | gratis hasta que haya proveedor **y** modelo |
+| `always` | cada paso pregunta al router | una llamada por paso |
 
-### Dos propiedades independientes
+`smart` no cuesta nada de fábrica: necesita `routerProvider` y `routerModel`. `routerStrategy` (`task` / `compliance` / `orient`) cambia las instrucciones que recibe el router, así que dos perfiles con los mismos átomos pueden recuperar distinto.
 
-Un átomo tiene un **peso** (weight, 1–5: cuán importante es) y una marca de **permanencia** (standing: si es una regla que debe cumplirse). Son cosas distintas a propósito, y confundirlas fue un defecto real:
+### «Permanente» no es «peso»
 
-- el peso es una entrada de **ordenación**: un hecho de peso alto va antes que uno de peso bajo;
-- la permanencia es una entrada de **elegibilidad**: una regla permanente se conserva **aunque no coincida con la petición actual**, porque una regla que solo se aplica cuando casualmente la mencionas no es una regla.
-
-La permanencia la decide el tipo (`constraint`), nunca el peso. `STANDING_MIN_WEIGHT` era el criterio antiguo y está obsoleto: descartaba en silencio toda restricción guardada con peso 2, lo que en un almacén real significaba que 32 de 66 reglas duras quedaban inelegibles. Los átomos permanentes siguen sujetos a los topes de recuento y de tokens —es una cuota del presupuesto, no una excepción—, así que esto no es un muro de reglas; en un recuerdo real medido solo un átomo se conservó **únicamente** por permanencia y el resto coincidía de verdad.
-
-El enrutador no puede anular esto. Los átomos permanentes se eligen **antes** de consultar al enrutador, y un enrutador que responde vacío, responde mal o agota el tiempo no los elimina. El enrutador decide qué **añadir**, nunca qué **quitar**.
-
-## Lo que no hará
-
-- No modificará `AGENTS.md`, `docs/decisions/`, `docs/adr/` ni `.git/`. `docs_sync` rechaza esas rutas y nombra el rechazo.
-- No hará commit, branch ni push. Registra datos de git; no ejecuta operaciones de git.
-- No inventará estado en silencio. Toda mutación pasa por `state_update` con una revisión de comparar-y-establecer, y las escrituras concurrentes entran en conflicto en vez de sobrescribirse.
-
----
+El peso (1–5) es una entrada de **ordenación**; la permanencia es una entrada de **elegibilidad**, decidida por el tipo (`constraint`), nunca por el peso. Fusionarlos fue un fallo real: reglas auténticas guardadas con el peso por defecto perdían en silencio su condición de regla dura. Los átomos permanentes siguen sujetos a los topes de cantidad y de tokens: una cuota del presupuesto, no una exención.
 
 ## Instalación
-
-Primero clona el repositorio:
 
 ```
 git clone https://github.com/iv3rins/dsh-memory.git
 ```
 
-Un comando. El host añade la dependencia **y** la entrada del bundle por sí mismo, porque el manifiesto declara `dsh.bundle` — `reconcileProfilePlugins()` promueve cualquier dependencia recién instalada que lo lleve.
+El manifiesto declara `dsh.bundle`, así que un solo comando añade la dependencia **y** la entrada del bundle:
 
 ```powershell
 $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
 & $dsh plugin --profile desktop add -w "link:D:\path\to\dsh-memory"
 ```
 
-Reinicia el host después. Verifica con `project_inspect`: la raíz del proyecto y un recuento de documentos indexados significan que el plugin está vivo.
+Reinicia el host y llama a `project_inspect`: una raíz de proyecto resuelta y un recuento de documentos indexados significan que está activo.
 
-Editar el perfil a mano también funciona (una entrada en `dependencies` más una entrada en `dsh.profile.bundles`), pero es el camino lento y fácil de dejar a medias: una dependencia sin la entrada del bundle se instala y luego nunca carga.
-
-pnpm avisa de que una dependencia `link:` no resuelve los peers desde el `node_modules` del destino. Eso es esperado e inofensivo aquí: este plugin no tiene dependencias en tiempo de ejecución, y su único peer (`@deepseek-ai/dsh-llm`) lo aporta el host.
-
-El parche del bundle (`cordis.patch.yml`) inserta una fila:
-
-```yaml
-- insert:
-    - id: project-memory
-      name: '@dsh-external/dsh-project-memory'
-```
-
-Se puede dar configuración en esa fila si los valores por defecto no encajan:
-
-```yaml
-- insert:
-    - id: project-memory
-      name: '@dsh-external/dsh-project-memory'
-      config:
-        l0Budget: 300
-        l1Budget: 1200
-        registerCommands: true
-        routerTier: smart
-```
-
-### Actualización
-
-`engines.dsh` es `>=0.2.0-rc.0 <0.3.0`. Es deliberadamente estrecho en vez de abierto: una versión menor del host puede cambiar el subconjunto de esquemas de herramientas o la forma del mensaje inyectado, y entonces este plugin fallaría **en silencio al montar** en lugar de ruidosamente al instalar. El rango declara lo que realmente se ha probado (0.2.1-rc.2); ámplialo tras volver a ejecutar la suite contra un host más nuevo.
-
-Cuando `engines.dsh` está presente, el host lee **solo** eso e ignora por completo los rangos de `peerDependencies` (`unmetRequirements` en `dsh-app-boot`). La entrada de peer se mantiene como declaración de lo que el paquete importa en tiempo de ejecución, no como una segunda compuerta.
-
-`npm run test:host` comprueba esto directamente: `tests/compat.mjs` pasa el manifiesto real a la propia `evaluatePluginCompatibility` del host, así que el rango no puede desincronizarse del runtime sin que falle una prueba.
-
----
+`engines.dsh` es `>=0.2.0-rc.0 <0.3.0`, deliberadamente estrecho: una versión menor del host puede cambiar el subconjunto de esquema de herramientas o la forma de los mensajes, y entonces este plugin fallaría al **montarse** en vez de al instalarse. Amplía el rango después de reejecutar la suite.
 
 ## Herramientas
 
-Quince herramientas. `memory_status` es la primera que hay que llamar en cualquier sesión desconocida.
+Dieciocho herramientas. Empieza cualquier sesión desconocida con `memory_status`.
 
 | Herramienta | Qué responde |
-| --- | --- |
-| `memory_bootstrap` | Todo lo que necesita una sesión nueva, en una llamada y dentro de un presupuesto de tokens. |
-| `memory_status` | ¿Está inicializada la memoria? ¿Qué revisión? ¿Está desactualizada respecto a git? ¿Cuántos átomos? También puede reconstruir el índice. |
-| `memory_search` | ¿Qué documentos hablan de esto? Ordenados, con filtros de estado/tipo/ruta. |
-| `memory_read` | Lee un documento, o una sección `##` concreta, acotado y enmarcado como datos. |
-| `memory_recall` | ¿Qué átomos guardados son relevantes para esta pregunta? Ordenados, con presupuesto, ruta y confianza. |
-| `memory_remember` | Guarda hechos durables, restricciones y decisiones para que una sesión posterior pueda encontrarlos. |
-| `memory_forget` | Retira átomos por id. La lápida es pegajosa: la reextracción no puede resucitarlos. |
-| `state_get` | La tarea actual, el progreso, los bloqueos, las decisiones, los siguientes pasos. |
-| `state_update` | Registra un cambio. Comparar-y-establecer; los conflictos se informan, no se sobrescriben. |
-| `state_handoff` | Escribe una nota de fin de sesión para que la siguiente empiece orientada. |
-| `project_init` | Crea `.dsh-memory/` para este proyecto. No se crea nada automáticamente. |
-| `project_inspect` | Raíz, datos de git, presencia de memoria, estado del índice — diagnóstico de solo lectura. |
-| `docs_check` | Problemas de front-matter y de estado en todo el conjunto de documentación. |
-| `docs_sync` | Actualiza un documento o propone un cambio, rechazando rutas protegidas. |
+|---|---|
+| `memory_status` | ¿Está inicializada? ¿Qué revisión? ¿Obsoleta respecto a git? ¿Cuántos átomos? |
+| `memory_bootstrap` | Todo lo que necesita una sesión nueva, en una llamada con presupuesto. |
+| `memory_search` | ¿Qué documentos hablan de esto? Ordenados, con filtros status/kind/path. |
+| `memory_read` | Lee un documento, o una sección `##`, enmarcado como datos. |
+| `memory_recall` | ¿Qué átomos guardados encajan con esta pregunta? Ordenados, con presupuesto y ruta. |
+| `memory_intent` | Lo mismo, mediante una Task Intent estructurada (tarea, módulos, operación, categorías). |
+| `memory_remember` | Guarda hechos, restricciones y decisiones duraderas. |
+| `memory_forget` | Retira átomos por id; la lápida es pegajosa. |
+| `memory_lifecycle` | Inspecciona y ajusta los niveles de los átomos (HOT / WARM / COLD). |
+| `memory_metrics` | Llamadas al router, latencia, aciertos de caché, entregas frente a usos, coste en tokens. |
+| `state_get` / `state_update` | Lee el estado; registra un cambio. Compare-and-set, los conflictos se informan. |
+| `state_handoff` | Nota de fin de sesión para que la siguiente empiece orientada. |
+| `project_init` / `project_inspect` | Crea `.dsh-memory/`; diagnóstico de solo lectura. |
+| `docs_check` / `docs_sync` | Problemas de front-matter; propone un cambio de documento (nunca in situ). |
 | `architecture_check` | Comprobación determinista de reglas de import contra `.dsh-memory/arch.json`. |
 
-### Comandos
+**Comandos:** `/memory-status`, `/memory-context`, `/memory-init`, `/memory-handoff`, `/memory-recall`, `/memory-route`, `/memory-forget`, `/memory-sync`, `/architecture-check`. `/memory-route` es un ensayo: muestra qué ruta tomaría el nivel actual y por qué, sin gastar una llamada al modelo.
 
-`/memory-status`, `/memory-context`, `/memory-init`, `/memory-handoff`, `/memory-recall`, `/memory-route`, `/memory-forget`, `/memory-sync`, `/architecture-check`.
+**Panel lateral.** Una entrada en la barra lateral abre un panel sobre la pregunta que la gente realmente tiene: *¿la compactación conservó mi memoria?* Muestra la última compactación en una frase, una línea de tiempo de las recientes de más nueva a más antigua (las silenciosas atenuadas, no ocultas), recuentos de activos y olvidados, reglas duras permanentes y el desglose por tipo y peso. Los controles del router están plegados por defecto. No tiene ningún control que modifique la memoria: los átomos los escriben la compactación y herramientas que llevan procedencia, así que la eliminación sigue siendo `memory_forget`. Sus dos rutas (`/project-memory/status`, `/project-memory/config`) son solo de loopback.
 
-`/memory-route` es un simulacro: muestra qué ruta tomaría el nivel actual y por qué, **sin gastar** ninguna llamada al modelo.
+**Inyección de contexto.** En el primer paso el plugin inyecta una línea base con presupuesto (identidad, hechos de git, tarea, invariantes, próximos pasos, bloqueos, decisiones, mapa de documentos) y la reenvía solo cuando cambia la identidad. Cada paso puede recibir además un bloque de recall, deduplicado contra la superficie visible de la sesión. Ambos llegan como mensajes propiedad del plugin dentro de una valla con nonce: el texto del proyecto es dato, nunca instrucción.
 
-### Panel de la barra lateral
+## Configuración
 
-El plugin añade una entrada a la barra lateral izquierda — **memoria del proyecto** — que abre un panel con:
+Todos los campos tienen un valor por defecto funcional; los valores inválidos se reparan, nunca son fatales.
 
-- el número de átomos vigentes y olvidados, **cuántos son reglas duras permanentes**, y el desglose por tipo y por peso;
-- el registro de compactaciones: cuántas se observaron, cuántas produjeron átomos y por qué el resto no produjo nada;
-- el presupuesto y los límites de recuerdo actuales;
-- los controles de enrutado: **cuándo** enrutar (`off` / `smart` / `always`), **qué priorizar** (`task` / `compliance` / `orient`), y el proveedor y el modelo.
+| Campo | Defecto | Significado |
+|---|---|---|
+| `enabled` | `true` | Interruptor maestro. |
+| `injectContext` / `injectRecall` | `true` | Inyecta la línea base / el recall por paso. |
+| `l0Budget` / `l1Budget` / `l2Budget` | `300` / `1200` / `2000` | Tokens: línea base mínima, completa, una lectura. |
+| `recallBudget` / `recallLimit` | `400` / `8` | Techo y número para un recall. |
+| `routerTier` / `routerStrategy` | `smart` / `task` | Ver la tabla de niveles. |
+| `routerProvider` / `routerModel` | `''` / `''` | El modelo del router. Vacío significa sin llamadas. |
+| `routerTimeoutMs` / `routerDigestBudget` | `20000` / `900` | Límite de la llamada; techo de tokens del resumen que se le ofrece. |
+| `extractOnCompaction` / `extractUserRules` | `true` | Extrae átomos de resúmenes y de reglas enunciadas. |
+| `semanticRouting`, `lifecycleEnabled`, `taskIntentEnabled` | `false` | Capas opcionales; un flag de vuelta a `false` restaura el comportamiento anterior. |
+| `protectedPaths` | `AGENTS.md`, `docs/decisions/`, `docs/adr/`, `.git/` | `docs_sync` nunca escribe ahí. |
 
-La estrategia no es decoración: cada valor envía un conjunto distinto de instrucciones al modelo enrutador, así que los mismos átomos se ponderan de otra manera. `compliance` pide al enrutador que conserve las reglas que gobiernan los archivos en juego aunque su redacción parezca ajena a la petición; `task` pide que prefiera aquello que este paso está a punto de hacer; `orient` pide que prefiera cómo funciona el subsistema, para peticiones que buscan entender en lugar de actuar.
+Seis campos pueden sobrescribirse por proyecto — `routerTier`, `routerStrategy`, `routerProvider`, `routerModel`, `recallBudget`, `recallLimit` — en `.dsh-memory/settings/<project-key>.json`. El resto sigue siendo global a propósito: las rutas y los techos de escritura describen la instalación, no un repositorio.
 
-Guardar pasa por el `configEditor` del host, así que un cambio se aplica igual que cualquier otro cambio de configuración: no queda un YAML editado a mano que no surte efecto hasta reiniciar y que mientras tanto contradice la configuración en ejecución. Si un perfil no expone `configEditor`, el panel lo dice en lugar de informar de un guardado que no ocurrió.
+## Almacenamiento
 
-El panel no tiene controles que modifiquen la memoria. Los átomos los escriben la compactación y las herramientas que llevan procedencia y respetan las lápidas; un botón del navegador que borrara uno saltaría ambos, así que la eliminación sigue siendo `memory_forget`.
-
-Sus dos endpoints son solo de loopback. Revelan la memoria del proyecto y pueden cambiar el comportamiento del enrutado, así que una petición de otro host se rechaza en lugar de atenderse.
-
-### Inyección de contexto
-
-En el primer paso de una sesión, el plugin inyecta una línea base (identidad del proyecto, datos de git, tarea actual, invariantes, siguientes pasos, bloqueos, decisiones, mapa de documentos) que cabe en `l0Budget`/`l1Budget`. Solo la reenvía cuando cambia la identidad, y comprueba la superficie de la sesión antes de enviar, de modo que una sesión compactada o reanudada no reciba un duplicado. Un reenvío es una línea base; no se inyecta nada cuando nada cambió.
-
-Cada paso puede recibir además un **bloque de recuerdo**: los átomos seleccionados para la petición de ese paso, con su tipo, procedencia y puntuación. Es un mensaje aparte con su propio tipo de origen, así que quien revise puede distinguir la línea base durable de una selección ordenada para ese paso. Se deduplica por **conjunto de átomos** contra la superficie de la sesión: repetir átomos que el modelo ya puede ver gastaría el presupuesto que este sistema existe para proteger, mientras que una selección **nueva** (o una eclipsada por la compactación) sí se envía.
-
-La línea base llega como un **mensaje de usuario propiedad del plugin, dentro de una valla nonce**. El texto del proyecto es dato, nunca instrucción: los prefijos de rol se neutralizan, la frase "ignore previous instructions" se elimina, los caracteres invisibles y bidireccionales se quitan, y las vallas de código se cierran para que un documento no pueda escapar del marco. El mismo enmarcado se aplica a los átomos recordados.
-
----
-
-## Estructura de almacenamiento
-
-Todo vive bajo `.dsh-memory/` en la raíz del proyecto. Confirmarlo o ignorarlo: ambas opciones son coherentes. Confirmarlo da estado compartido al equipo; ignorarlo da uno privado a cada desarrollador.
+Todo vive bajo `.dsh-memory/`. Commitéalo para memoria compartida del equipo, o ignóralo para una privada: ambas opciones son coherentes.
 
 ```
 .dsh-memory/
-  project.json          projectId estable + datos de git vistos por primera vez
-  state/
-    current.json        el documento de estado (esquema 2, con revisiones)
-    journal.jsonl       registro de solo-añadir de escrituras aceptadas
-    compactions.jsonl   una fila por compactación observada, incluidas las silenciosas
-    .lock               bloqueo de escritura de corta duración
-  memory/
-    atoms.jsonl         átomos durables, un registro JSON por línea
-    .lock               bloqueo de escritura de corta duración
-  index.json            caché derivada — seguro de borrar, se reconstruye bajo demanda
-  arch.json             reglas de arquitectura opcionales
-  settings/
-    <project-key>.json  sobrescrituras por proyecto — solo existe para proyectos que tienen una
+  project.json       projectId estable + hechos de git vistos por primera vez
+  state/current.json el documento de estado (con recuento de revisión)
+  state/journal.jsonl registro de solo anexado de escrituras aceptadas
+  state/compactions.jsonl una fila por compactación observada, incluidas las silenciosas
+  memory/atoms.jsonl átomos duraderos, un registro JSON por línea
+  memory/metrics.json contadores de eventos acotados
+  index.json         caché derivada — seguro de borrar
+  settings/<key>.json sobrescrituras por proyecto
 ```
 
-`atoms.jsonl` es de solo-añadir y direccionado por contenido: el id de un átomo es un hash de su tipo y su texto normalizado, así que ver la misma afirmación dos veces refuerza un registro en lugar de añadir una copia. `memory_forget` escribe una lápida en lugar de borrar la línea: el registro queda como evidencia, y la lápida es pegajosa para que una pasada de extracción posterior no pueda traerlo de vuelta.
+Los ids de los átomos son direccionados por contenido (hash del tipo y el texto normalizado), así que ver la misma afirmación dos veces refuerza un registro. `memory_forget` escribe una lápida en lugar de borrar la línea, así que una extracción posterior no puede resucitarla. Un archivo corrupto se renombra y se informa, no se sustituye en silencio.
 
-`compactions.jsonl` es el registro operativo: una fila por cada compactación que este plugin presenció, **incluidas las que no produjeron átomos**, cada una con un `skipReason` de un conjunto cerrado (`empty-summary`, `no-extractable-statements`, `store-write-failed`, etc.). El almacén de átomos solo muestra éxitos, así que sin este archivo un extractor roto y un proyecto inactivo se ven iguales. `/memory-status` lo resume.
+## Qué está medido y qué no
 
-`index.json` es una caché. Si está mal o se borra, `memory_status` lo reconstruye. Un `current.json` corrupto se renombra a `current.json.corrupt-<marca de tiempo>` y se informa en el resultado en lugar de reemplazarse en silencio: el archivo dañado es evidencia.
+**Medido** (`docs/design/benchmark-compaction-loss.md`): sobre 80 preguntas de un conjunto de datos real, un contexto con solo el resumen acertó un 16.3% y solo la cola cruda un 15.0%; resumen más recall de átomos, un 25.0%. Todos los intervalos de confianza cruzan cero, así que esto es una **dirección consistente, no un efecto establecido**.
 
-> El `.dsh-memory/` de este repositorio está en gitignore: es la **salida** del plugin, no el plugin. Un equipo que quiera compartir memoria debe quitar el ignore en su propio proyecto.
+**No medido**:
 
----
+- **Precisión del router: cero.** El subagente router nunca se ha ejecutado contra un modelo real. Sus pruebas cubren timeout, aborto, respuestas malformadas e ids desconocidos con un delegado simulado; no se ha observado ningún spawn real produciendo una selección real. Su **tasa de disparo** en `smart` tampoco está medida: las reglas de escalado están en `decideRoute`, la frecuencia con que se disparan no tiene cifra.
+- **Coste del escaneo completo.** `gateAtoms` puntúa cada átomo vivo en cada recall (`core/gate.js`). Medido aquí — almacén de 401 registros, esta máquina — un `readAtoms` cuesta ≈ 5.6 ms y un `gateAtoms` ≈ 9.4 ms; sobre átomos sintéticos uniformes la puerta crece
+casi linealmente en ≈ 0.7 / 1.0 / 1.6 / 3.3 ms para 100 / 200 / 400 / 800 átomos. No
+existe índice invertido. La selección de átomos permanentes es una **pasada** aparte, pero reutiliza el mismo escaneo, así que no es un canal de candidatos independiente.
+- **Coste de parseo de `atoms.jsonl`.** Cada recall relee y reparsea el archivo completo (`lib/recall.js`); no hay caché de instantánea en proceso. Cualquier caché necesita invalidación entre procesos (otra sesión, otro proceso o `memory_forget` pueden reescribir el archivo), y por eso es un tema de diseño y no un parche.
+
+La búsqueda es léxica, no semántica. El router degrada a selección determinista al agotarse el tiempo, así que su peor caso es perder una mejora, no romper el paso.
+
+## Lo que no hará
+
+- No modificará `AGENTS.md`, `docs/decisions/`, `docs/adr/` ni `.git/`. `docs_sync` rechaza esas rutas y nombra el rechazo.
+- No hará commit, ramas ni push. Registra hechos de git; no ejecuta operaciones de git.
+- No inventará estado en silencio. Toda escritura es compare-and-set; las escrituras concurrentes entran en conflicto en lugar de sobrescribirse.
+- No reescribirá un documento autoritativo. Las propuestas van a `docs/proposals/`.
 
 ## Verificación
 
 ```powershell
-npm run setup        # extrae del app.asar instalado los paquetes del host y los enlaza
-npm test             # 14 pruebas unitarias de la capa core/ pura (sin DSH)
-npm run test:host    # quince comprobaciones a nivel de host contra el harness real
+npm run setup        # extrae y enlaza los paquetes del host (una vez, idempotente)
+npm test             # 14 pruebas unitarias para la capa core/ pura
+npm run test:host    # 28 comprobaciones encadenadas contra el harness real
 ```
 
-`npm run setup` es el requisito previo, de una sola vez (e idempotente), para `test:host`. Lee los paquetes del payload de escritorio instalado en lugar de usar `npm install`, así que las pruebas se ejecutan contra el host exacto en el que este plugin se cargará.
+La suite del host cubre los esquemas de herramientas que el harness impone, la inyección y la deduplicación, el bucle completo compactación → recall → olvido mediante eventos reales, la seguridad y el rechazo de rutas, la degradación elegante, la compatibilidad del manifiesto, el comportamiento HTTP del panel, los ajustes por proyecto y la mitad Cliente. Una comprobación omitida imprime `SKIP` y no demuestra nada.
 
-`npm run test:host` ejecuta, en orden:
+**Una suite en verde no es una instalación funcionando.** La suite monta el plugin en un contexto cordis que el repositorio construye; solo arrancar el host demuestra que el perfil lo carga. Haz ambas cosas.
 
-| Comprobación | Qué demuestra |
-| --- | --- |
-| `smoke.mjs` | El grafo de módulos carga y exporta la forma de plugin de cordis. |
-| `tools.mjs` | Todo esquema de herramienta es aceptado por el subconjunto de JSON Schema que el harness impone. |
-| `cordis-semantics.mjs` | El comportamiento de resolución de servicios del que depende el plugin, medido en vez de asumido. |
-| `inject.mjs` | Composición de la línea base, etiquetado de mensajes y deduplicación por superficie. |
-| `safety.mjs` | Rutas protegidas rechazadas, originales idénticos byte a byte, traversal bloqueado, escrituras obsoletas en conflicto, pasajes enmarcados como datos. |
-| `degrade.mjs` | Las 15 herramientas siguen registrándose y funcionando cuando faltan servicios opcionales. |
-| `continuity.mjs` | Estado, decisiones, bloqueos y documentos sobreviven a un reinicio simulado; la obsolescencia sigue a un HEAD real en movimiento. |
-| `root.mjs` | Descubrimiento de raíz: los subdirectorios comparten memoria, los directorios no relacionados no la heredan, git y la configuración mandan. |
-| `compat.mjs` | La propia `evaluatePluginCompatibility` del host acepta este manifiesto y rechaza un rango insatisfacible. |
-| `patch.mjs` | `cordis.patch.yml` resuelve a través de los `bundlePatchPaths` del propio host e inserta un plugin cargable. |
-| `mount.mjs` | El plugin monta en un contexto cordis real con el `ToolRuntime` real, y se desmonta limpiamente. |
-| `loop.mjs` | El bucle cerrado: un evento de compactación escribe átomos por el bus de eventos real, el siguiente paso los recuerda de forma dispersa, una repetición es idempotente, un duplicado no se reinyecta y un olvido se respeta. |
-| `panel.mjs` | Los endpoints de la barra lateral sobre HTTP real: informan del mismo almacén y registro que leen las herramientas, escriben ajustes solo mediante el `configEditor` del host, rechazan un valor fuera del conjunto aceptado, rechazan a un par que no sea loopback y declaran una línea corrupta en lugar de informar de un almacén vacío. |
-| `client.mjs` | La mitad de navegador: una entrada lateral y un panel principal **que le corresponde**, todas las cadenas presentes en ambos idiomas con los mismos marcadores, y rutas y opciones idénticas a las del host. |
-
-`npm test` cubre contención de rutas, análisis de front-matter, derivación del índice, ordenación de búsqueda, enmarcado de guard, ajuste al presupuesto, comprobación de arquitectura, escrituras atómicas, bloqueo, fusión de estado y toda la capa de átomos (identidad, lápidas, la compuerta dispersa, niveles de ruta, extracción, el enrutador, el recuerdo y el observador de compactación).
-
-Cada prueba de host necesita los paquetes extraídos y **se salta** (código de salida 0) cuando faltan. Un salto se imprime como `SKIP` y nunca cuenta como aprobado: si una ejecución muestra `SKIP`, no demuestra nada.
-
-**Una suite en verde no es lo mismo que una instalación funcionando.** La suite monta el plugin en un contexto cordis que el repositorio construye; solo arrancar el host demuestra que el perfil realmente lo carga. Haz ambas cosas: `npm run test:all`, luego reinicia y llama a `project_inspect`.
-
----
-
-## Configuración
-
-Cada campo tiene un valor por defecto funcional. Los valores inválidos se reparan, no son fatales: un plugin de memoria no debería detener una sesión porque un archivo de configuración tenga una errata.
-
-| Campo | Por defecto | Significado |
-| --- | --- | --- |
-| `enabled` | `true` | Interruptor maestro; `false` no registra nada. |
-| `injectContext` | `true` | Inyecta la línea base en sesiones nuevas. |
-| `announceToAgent` | `true` | Añade la sección de orientación al system prompt. |
-| `registerCommands` | `true` | Registra los nueve comandos de barra. |
-| `l0Budget` / `l1Budget` | `300` / `1200` | Presupuestos de tokens, línea base mínima y completa. |
-| `l2Budget` | `2000` | Presupuesto de tokens para una lectura. |
-| `maxDocuments` | `5000` | Tope de documentos indexados. |
-| `gitTimeoutMs` | `4000` | Tiempo límite de sondeo de git; un git lento nunca bloquea un paso. |
-| `includePrefixes` | `docs/`, `README.md`, … | Qué se indexa. |
-| `excludePrefixes` | `.git/`, `node_modules/`, … | Qué nunca se indexa. |
-| `protectedPaths` | `AGENTS.md`, `docs/decisions/`, … | Rutas que `docs_sync` rechaza. |
-| `projectRoot` | cwd de la sesión | Sobrescribe la raíz detectada. |
-| `extractOnCompaction` | `true` | Convierte un resumen de compactación en átomos. |
-| `extractUserRules` | `true` | Cosecha las reglas que el usuario declara explícitamente. |
-| `injectRecall` | `true` | Permite que un paso reciba un bloque de recuerdo. |
-| `recallBudget` / `recallLimit` | `400` / `8` | Techo de tokens y número de átomos por recuerdo. |
-| `routerTier` | `smart` | `off`, `smart` o `always`. Ver la tabla de niveles arriba. |
-| `routerStrategy` | `task` | `task`, `compliance` u `orient`. Elige el conjunto de instrucciones que recibe el modelo enrutador. |
-| `routerProvider` / `routerModel` | `''` / `''` | El modelo del enrutador. `smart` sigue siendo gratis hasta que ambos estén definidos. |
-| `routerReasoningEffort` | `''` | Se pasa al modelo enrutador, cuando lo soporta. |
-| `routerTimeoutMs` | `20000` | Cota de una llamada al enrutador. |
-| `routerCooldownSteps` | `1` | Pasos a esperar antes de volver a enrutar la misma petición. |
-| `routerDigestBudget` | `900` | Techo de tokens del resumen de átomos que recibe el enrutador. |
-
----
-
-## Ajustes por proyecto
-
-Un perfil es una sola configuración para todos los repositorios. Eso está mal para al menos un ajuste: el modelo de enrutador que sirve a un monorepo grande de TypeScript no es el que quieres revisando el recuerdo en un repositorio de notas, y pagar por un enrutador en un proyecto mientras se mantiene gratis en otro es una decisión por proyecto, no global.
-
-Por eso seis campos se pueden sobrescribir por proyecto:
-
-`routerTier`, `routerStrategy`, `routerProvider`, `routerModel`, `recallBudget`, `recallLimit`
-
-Todo lo demás sigue siendo global a propósito. Las rutas, los presupuestos de la línea base, los interruptores de extracción y las rutas protegidas describen la instalación, no un repositorio; hacerlos por proyecto permitiría que un proyecto cambiara qué puede escribir el plugin.
-
-**Cómo se guarda.** Una sobrescritura es un archivo pequeño dentro del proyecto:
+## Estructura
 
 ```
-<project>/.dsh-memory/settings/<project-key>.json
-{ "schema": 1, "root": "<absolute project root>", "values": { "routerModel": "deepseek-reasoner" } }
+core/   Node puro, sin importar DSH — el núcleo comprobable
+        memory.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
+        extract.js  config.js  index.js  search.js  store.js  paths.js  ...
+lib/    la capa cordis: index.js  tools.js  commands.js  panel.js  recall.js
+        router.js  semantic.js  delegate.js  compaction-memory.js
+client.js  el panel lateral (mitad Cliente)
+tests/     unit/ (node --test) y comprobaciones *.mjs del host
+docs/      notas de diseño y propuestas de documentos
 ```
 
-La clave es la ruta absoluta con los separadores y el dos puntos de la unidad convertidos en guiones, así que en un host insensible a mayúsculas `D:\x\proj` y `D:/x/proj/` son el mismo proyecto. Cada paso resuelve `effectiveSettings(profile, root)` una vez, y todo lo que viene después —el modelo del enrutador, el nivel, la estrategia, el presupuesto de recuerdo— usa los valores combinados. Ningún otro lugar del plugin sabe que existe una segunda capa.
-
-**Tres reglas que importan:**
-
-- Un valor igual al global se guarda igualmente como sobrescritura. «Este proyecto usa `task` aunque el perfil pase a `compliance`» es una decisión real, y descartarla en silencio haría que el proyecto siguiera la siguiente edición global.
-- Quitar una sobrescritura es explícito. Poner el valor en `null` la borra y restaura la herencia; el archivo desaparece cuando se va su última clave. Nunca se deja un archivo vacío, porque se leería como una decisión que nadie tomó.
-- Un archivo de ajustes corrupto se reporta, nunca se adivina. Los valores del perfil se siguen aplicando —un archivo malo no debe dejar sin memoria a un proyecto— y el panel muestra el motivo.
-
-**En el panel.** El panel lateral tiene un selector de proyecto, un interruptor Global / Este proyecto, y una marca en cada campo sobrescrito. No se escribe nada hasta pulsar Guardar, y la capa que estás editando aparece junto a los controles, no solo en el selector.
-
----
-
-## Estructura del proyecto
-
-```
-core/          Node puro, sin importar DSH — el corazón comprobable
-  memory.js    almacén de átomos, identidad, fusión, lápidas
-  gate.js      selección dispersa de mezcla de expertos y decisión de ruta
-  extract.js   extracción determinista de resúmenes y reglas de usuario
-  state.js     documento de estado, comparar-y-establecer, diario
-  projects.js  registro de proyectos, ajustes por proyecto, combinación efectiva
-  indexer.js   índice de documentos   search.js   ordenación léxica
-  context.js   presupuestos de tokens   guard.js   marco de datos-no-instrucciones
-lib/           la capa cordis
-  index.js     cuerpo del plugin, inyección en agent/pre-step
-  tools.js     15 herramientas de agente   commands.js   9 comandos de barra
-  compaction-memory.js  observador de session/event
-  recall.js    recuerdo de un paso   router.js   prompt y análisis del enrutador
-  delegate.js  activación del subagente
-  panel.js     las dos rutas de loopback del panel lateral
-  settings-write.js  persiste un cambio del panel mediante configEditor
-client.js      el panel lateral (mitad de navegador, la carga el shell web)
-tests/unit/    pruebas del core puro (node --test)
-tests/*.mjs    comprobaciones a nivel de host contra el harness real
-docs/          notas de diseño y propuestas de documentos
-scripts/       extracción y enlace de paquetes del host para las pruebas
-```
-
-`docs/design/system-c-memory-atoms.md` explica en profundidad la capa de átomos y la compuerta, incluidas las dos trampas de implementación que se encontraron **probando y no leyendo** (un softmax sobre puntuaciones crudas colapsa a un solo experto; ordenar solo por solapamiento descarta las restricciones duras justo cuando importan).
-
----
-
-## Limitaciones conocidas
-
-Ver [LIMITATIONS.md](./LIMITATIONS.md). La versión corta: la búsqueda es léxica, no semántica; el enrutador está acotado por `routerTimeoutMs` y degrada a selección determinista; los átomos no son documentos autorizados; y no hay commit automático ni consulta entre proyectos.
-
-El subagente enrutador **nunca se ha ejecutado contra un modelo real**. Sus pruebas unitarias cubren tiempo de espera, aborto, respuesta malformada e ids desconocidos con un delegado simulado, y su construcción se comprueba contra la firma real de `startActivation` — pero no se ha observado ningún spawn real produciendo una selección real. El fallo degrada a selección determinista, así que el peor caso es perder una mejora, no romper un paso. Por eso su prompt está **sin medir**: las estrategias cambian qué se le pide, y no se afirma ninguna cifra de precisión para ninguna de ellas.
-
-El extractor es más estricto que antes —solo lee secciones de compactación conocidas, solo los elementos de lista de Markdown se convierten en átomos, y un encabezado de sección ya no decide el tipo—, pero sigue siendo coincidencia de patrones determinista, no criterio. Un párrafo que enuncia una regla sin viñeta no se extrae: decláralo con `memory_remember`.
-
----
+`docs/design/system-c-memory-atoms.md` explica la capa de átomos en profundidad, incluidas las dos trampas encontradas probando en lugar de leyendo: un softmax sobre puntuaciones crudas colapsa a un solo experto, y ordenar solo por solapamiento descarta las restricciones duras justo cuando importan.
 
 ## Licencia
 
