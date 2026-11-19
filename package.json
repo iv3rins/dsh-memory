@@ -1,8 +1,8 @@
 {
   "name": "@dsh-external/dsh-project-memory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
-  "description": "Project-level knowledge and development-state memory for DeepSeek Harness: Markdown docs as source of truth, a state system (task/progress/git/handoff) that survives restarts, compaction, and branch switches, and memory atoms recalled by sparse routing. Host-side cordis plugin plus one sidebar panel.",
+  "description": "Project memory for DeepSeek Harness. Save task progress and search groups of related notes across sessions.",
   "author": "iverins",
   "license": "MIT",
   "repository": {
@@ -66,7 +66,7 @@
     "extract:harness": "node scripts/extract-harness.mjs @deepseek-ai/cordis @deepseek-ai/dsh-tools @deepseek-ai/dsh-llm @deepseek-ai/dsh-system-prompt @deepseek-ai/dsh-app-boot @deepseek-ai/dsh-plugin-manager",
     "setup": "npm run extract:harness && node scripts/resolve-host-deps.mjs @deepseek-ai/dsh-tools && node scripts/resolve-host-deps.mjs @deepseek-ai/dsh-app-boot && npm run link:harness",
     "test": "node --test \"tests/unit/*.test.mjs\"",
-    "test:host": "node tests/smoke.mjs && node tests/tools.mjs && node tests/cordis-semantics.mjs && node tests/inject.mjs && node tests/asar-locate.mjs && node tests/delivery.mjs && node tests/truncation.mjs && node tests/semantic-category.mjs && node tests/safety.mjs && node tests/degrade.mjs && node tests/continuity.mjs && node tests/root.mjs && node tests/compat.mjs && node tests/patch.mjs && node tests/mount.mjs && node tests/loop.mjs && node tests/panel.mjs && node tests/recent.mjs && node tests/projects.mjs && node tests/client.mjs && node tests/handshake.mjs && node tests/semantic.mjs && node tests/semantic-integration.mjs && node tests/color-handshake.mjs && node --test scripts/bench/reproducibility.test.mjs && node tests/experiment.mjs && node tests/ui.mjs && node tests/panel-bugs.mjs",
+    "test:host": "node tests/smoke.mjs && node tests/tools.mjs && node tests/cordis-semantics.mjs && node tests/inject.mjs && node tests/asar-locate.mjs && node tests/delivery.mjs && node tests/truncation.mjs && node tests/semantic-category.mjs && node tests/safety.mjs && node tests/degrade.mjs && node tests/continuity.mjs && node tests/root.mjs && node tests/compat.mjs && node tests/patch.mjs && node tests/mount.mjs && node tests/loop.mjs && node tests/panel.mjs && node tests/recent.mjs && node tests/projects.mjs && node tests/client.mjs && node tests/handshake.mjs && node tests/semantic.mjs && node tests/semantic-integration.mjs && node tests/color-handshake.mjs && node --test scripts/bench/reproducibility.test.mjs scripts/bench/funnel.test.mjs && node tests/experiment.mjs && node tests/ui.mjs && node tests/panel-bugs.mjs",
     "test:all": "npm test && npm run test:host"
   }
 }

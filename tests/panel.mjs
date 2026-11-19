@@ -538,6 +538,10 @@ try {
     assert.equal(known.status, 200)
     assert.equal(known.body.root, root, 'a known project is reported as itself')
     assert.equal(known.body.scope, 'global', 'with no overrides, it reports the global layer')
+    assert.equal(typeof known.body.connection?.baseUrl, 'string', 'connection reports the configured base URL')
+    assert.equal(typeof known.body.connection?.model, 'string', 'connection reports the configured model')
+    assert.equal(typeof known.body.connection?.hasKey, 'boolean', 'connection reports key availability without exposing it')
+    assert.equal(typeof known.body.connection?.credentialsAvailable, 'boolean', 'connection reports credential-store availability')
     assert.deepEqual(known.body.overridable, [...projects.OVERRIDABLE], 'and lists what a project may override')
 
     // Every key the panel can edit today is also overridable, so the "global-only" refusal

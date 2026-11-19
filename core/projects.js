@@ -33,6 +33,7 @@
 
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
+import { readAtoms } from './memory.js'
 import { MEMORY_DIR, toPosix } from './paths.js'
 import { writeJsonAtomic } from './store.js'
 
@@ -199,24 +200,11 @@ export function writeOverride(input) {
 export function describeProject(root) {
   const resolved = path.resolve(root)
   const memoryDir = path.join(resolved, MEMORY_DIR)
-  const atomsFile = path.join(memoryDir, 'memory', 'atoms.jsonl')
-  /** @type {number} */
-  let atoms = 0
+  const store = readAtoms(resolved, { includeClusters: false })
+  const atoms = store.ok ? store.live.length : 0
   /** @type {string | null} */
   let lastCompactionAt = null
   try {
-    if (existsSync(atomsFile)) {
-      const text = readFileSync(atomsFile, 'utf8')
-      for (const line of text.split('\n')) {
-        if (line.trim() === '') continue
-        try {
-          const row = JSON.parse(line)
-          if (row !== null && typeof row === 'object' && row.forgotten !== true) atoms += 1
-        } catch {
-          // A malformed line is counted by the panel's own reader, not here.
-        }
-      }
-    }
     const ledger = path.join(memoryDir, 'state', 'compactions.jsonl')
     if (existsSync(ledger)) {
       const rows = readFileSync(ledger, 'utf8').split('\n').filter((line) => line.trim() !== '')

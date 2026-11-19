@@ -30,7 +30,7 @@ export const MAX_METRIC_EVENTS = 2000
 export const METRIC_EVENTS = Object.freeze([
   'intent',           // a task intent was accepted
   'intent_rejected',  // a task intent failed validation
-  'router_call',      // the router subagent was invoked
+  'router_call',      // the routing model was invoked
   'router_ok',        // …and answered
   'router_fail',      // …and did not
   'cache_hit',

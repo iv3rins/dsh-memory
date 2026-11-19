@@ -24,35 +24,62 @@ MIT · Node 20+ · 无运行时依赖
 |---|---|---|---|
 | **A — 文档** | 你的 Markdown | 你，在 git 里 | 一切 |
 | **B — 状态** | 任务、进度、阻塞、决定 | `state_update` / `state_handoff` | 重启、压实 |
-| **C — 原子** | 短小的持久陈述 | 压实观察器、`memory_remember` | 重启、压实 |
+| **C — 记忆簇** | 按主题聚合的持久记忆原子 | 压实观察器、`memory_remember` | 重启、压实 |
 
 真正有意思的是 **C**：
 
 ```
 长会话 ──▶ 压实 ──▶ 有损摘要（模型下一步看到的东西）
                │
-               └──▶ 短原子 ──▶ .dsh-memory/memory/atoms.jsonl
+               └──▶ 记忆簇 ──▶ .dsh-memory/memory/atoms.jsonl
                                         │
-下一步 ──▶ 只为「这次请求」做稀疏选择 ────┘
-            └──▶ 少量原子，受 token 上限约束
+下一步 ──▶ 按当前任务定位相关簇 ──────────┘
+            └──▶ 从相关簇选出预算内的候选原子
 ```
 
 四条性质让它便宜到可以每一步都跑：
 
-1. **稀疏，而非倾倒。** 从几百条里只取少数几条，且按*本次*请求排序。硬性 token 上限意味着成本由配置决定，而不随项目规模膨胀。
+1. **先定位簇。** 按任务涉及的词语、标签和文件路径匹配主题，再从匹配的簇中选择预算内的候选原子。
 2. **记录，而非抓取。** 状态与原子由工具调用写入。从不调用 `state_update` 的 Agent 就没有状态记忆——这是*可见的缺失*，而不是悄悄出错。唯一的例外是刻意的：压实观察器读取压实摘要，那正是系统 C 存在的理由。
-3. **规则优先于相关性。** `constraint` 类原子是**常驻（standing）**的：它在任何打分之前就被选中，且即使本次请求字面不相关也会保留。只在"你恰好提到它"时才生效的规则，不算规则。
-4. **选择永不写入。** 可选的 router 子代理只能从交给它的 id 里选，它编造的 id 会被丢弃。写操作只发生在确定性代码里。
+3. **确定性召回为常驻规则预留预算。** 即使请求没有字面匹配，常驻约束仍可进入确定性召回。配置路由模型后，提议中的任何原子都由执行模型决定是否加载。
+4. **选择只读。** 路由模型只能选择收到的 ID。确定性代码负责写入，并丢弃未知 ID。
 
-### Router 三档
+### 路由模型档位
 
 | `routerTier` | 行为 | 成本 |
 |---|---|---|
 | `off` | 只做确定性打分 | 免费 |
-| `smart`（默认） | 仅当确定性打分没找到相关项、或匹配很弱时才升级 | 未同时配置 provider 与 model 前完全免费 |
-| `always` | 每一步都问 router | 每步一次调用 |
+| `smart`（默认） | 仅当确定性打分没找到相关项、或匹配很弱时才复核 | 未配置模型时不调用 |
+| `always` | 每次符合条件的召回都调用路由模型 | 每次查询至多一次模型调用 |
 
-`smart` 开箱不花钱：必须 `routerProvider` 与 `routerModel` 都填了才会调用。`routerStrategy`（`task` / `compliance` / `orient`）改变发给 router 的指令集，因此原子相同、档位相同的两套配置也可能召回不同结果。
+初始设置没有路由模型。配置 DSH 路由模型需同时填写 `routerProvider` 和 `routerModel`，使用 `routerStrategy`（`task` / `compliance` / `orient`）指定检索指令。
+
+#### 复核记忆提议
+
+配置路由模型后，`agent/pre-step` hook 可以在执行模型开始工作前提供一份提议，其中只有候选 ID、类型、簇 ID 和关联文件。执行模型可先阅读当前项目，再决定加载哪些记忆。手动调用 `memory_intent` 也走同一套流程。
+
+1. 使用 `memory_intent({ task_summary: "解释设置如何保存", affected_modules: ["lib/panel.js"] })` 查询。
+2. 将返回的 `proposal_id` 与 `accept_memory_ids` 一起传给 `memory_intent`，只加载获准的记忆正文。传入空列表可拒绝整份提议。
+3. 要重新查询，将 `proposal_id` 与 `feedback` 一起传入，说明当前项目里的证据。新查询会利用这些证据并排除此前被拒绝的记忆 ID。执行模型可继续复核，按需要重复此步骤。
+
+路由模型可以返回无记忆。路由模型弃权或调用失败时，本次召回没有记忆正文进入上下文。停用或未配置路由模型时，使用确定性召回。
+
+#### 在面板选择路由模型
+
+在工具栏可以切换已知项目。打开 **配置路由模型**，填入 OpenAI 兼容的 **Base URL**（例如 `http://127.0.0.1:8080/v1`）和服务所需的 API Key。点击 **获取模型**，选中模型后点击 **使用此模型**。远程服务必须使用 HTTPS，密钥保存到 DSH 凭据库。此连接对当前 Profile 的所有项目生效。调用路由模型时，任务意图和记忆候选会发往该服务。点击 **恢复 DSH 路由模型** 可移除独立路由模型配置。
+
+#### 旧版完整本地地址
+
+已有 Profile 配置可以继续使用完整的 chat-completions 地址，例如：
+
+```yaml
+routerTier: always
+localRouterEndpoint: http://127.0.0.1:8080/v1/chat/completions
+localRouterModel: your-local-model
+routerTimeoutMs: 20000
+```
+
+地址只允许 `127.0.0.1` 或 `[::1]`，并需与 OpenAI API 兼容。本地配置优先于 DSH 路由模型，沿用同一套执行模型复核流程。每次请求独立计时。
 
 ### 「常驻」不等于「权重」
 
@@ -85,12 +112,12 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 | `memory_bootstrap` | 新会话需要的一切，一次有预算的调用。 |
 | `memory_search` | 哪些文档谈到这个？带排序与 status/kind/path 过滤。 |
 | `memory_read` | 读一篇文档，或其中一个 `##` 小节，按数据处理。 |
-| `memory_recall` | 哪些已存原子适配这个问题？带排序、预算与路由。 |
-| `memory_intent` | 同上，但用结构化 Task Intent（任务、模块、操作类型、分类）。 |
+| `memory_recall` | 从项目记忆簇中做确定性检索，返回相关原子。 |
+| `memory_intent` | 按任务查询记忆簇，并可接受、拒绝或重新查询提议。 |
 | `memory_remember` | 存入持久事实、约束与决定。 |
 | `memory_forget` | 按 id 退役原子；墓碑是粘性的。 |
 | `memory_lifecycle` | 查看并调整原子层级（HOT / WARM / COLD）。 |
-| `memory_metrics` | Router 调用数、延迟、缓存命中、投递与确认使用、token 成本。 |
+| `memory_metrics` | 路由模型调用数、延迟、缓存命中、交付与确认使用、token 成本。 |
 | `state_get` / `state_update` | 读状态；记录变更。CAS 写入，冲突会被告知。 |
 | `state_handoff` | 写一条会话收尾，让下一个会话开局即清醒。 |
 | `project_init` / `project_inspect` | 创建 `.dsh-memory/`；只读诊断。 |
@@ -99,9 +126,9 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 
 **命令：** `/memory-status`、`/memory-context`、`/memory-init`、`/memory-handoff`、`/memory-recall`、`/memory-route`、`/memory-forget`、`/memory-sync`、`/architecture-check`。`/memory-route` 是预演：显示当前档位会走哪条路、为什么，且不花一次模型调用。
 
-**侧边栏面板。** 一个侧边栏入口，打开后回答人们真正关心的问题——*压实到底有没有把记忆留住？* 它显示：最近一次压实的一句话结论、由新到旧的压实时间线（沉默的压实变暗而不是隐藏）、活跃与已遗忘原子数、常驻硬规则数，以及按类型与权重的分布。Router 控件默认折叠。面板**没有任何改动记忆的按钮**：原子由压实和带溯源的工具写入，删除只能走 `memory_forget`。它的两条路由（`/project-memory/status`、`/project-memory/config`）仅限回环地址。
+**侧边栏面板。** 查看最近的压实结果、有效记忆与已遗忘记忆的条数、常驻规则和记忆分布。路由模型控件默认折叠。可用 `memory_forget` 退役记忆。面板接口限本机回环地址访问。
 
-**上下文注入。** 第一步注入一份在预算内的基线（身份、git 事实、任务、不变量、下一步、阻塞、决定、文档地图），仅在身份变化时重发。每一步还可能收到一个召回块，并按会话可见面去重。两者都作为插件自有消息、置于 nonce 围栏内送达：项目文本是数据，永远不是指令。
+**上下文注入。** 第一步注入预算内的项目基线（身份、git 状态、任务、规则、下一步、阻塞、决定和文档索引），仅在身份变化时重发。每一步还可能收到确定性召回或待复核的记忆提议。基线与召回消息经会话去重，并通过 nonce 围栏标明项目数据。
 
 ## 配置
 
@@ -114,8 +141,10 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 | `l0Budget` / `l1Budget` / `l2Budget` | `300` / `1200` / `2000` | Token：最小基线、完整基线、单次读取。 |
 | `recallBudget` / `recallLimit` | `400` / `8` | 单次召回的上限与条数。 |
 | `routerTier` / `routerStrategy` | `smart` / `task` | 见上文档位表。 |
-| `routerProvider` / `routerModel` | `''` / `''` | Router 使用的模型。留空即不调用。 |
-| `routerTimeoutMs` / `routerDigestBudget` | `20000` / `900` | 调用时限；交给它的摘要的 token 上限。 |
+| `routerProvider` / `routerModel` | `''` / `''` | DSH 路由模型。 |
+| `routerBaseUrl` / `localRouterModel` | `''` / `''` | 独立路由模型的 API 根地址和模型名，可在面板中配置。 |
+| `localRouterEndpoint` | `''` | 旧版 Profile 使用的回环 chat-completions 地址。 |
+| `routerTimeoutMs` / `routerDigestBudget` | `20000` / `900` | 每次路由模型调用的超时和预计输入 token 预算。 |
 | `extractOnCompaction` / `extractUserRules` | `true` | 从摘要与明说的规则里提取原子。 |
 | `semanticRouting`、`lifecycleEnabled`、`taskIntentEnabled` | `false` | 可选加层；把该开关设回 `false` 即恢复旧行为。 |
 | `protectedPaths` | `AGENTS.md`、`docs/decisions/`、`docs/adr/`、`.git/` | `docs_sync` 永不写入。 |
@@ -132,13 +161,13 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
   state/current.json  状态文档（带修订号）
   state/journal.jsonl 已接受写入的追加日志
   state/compactions.jsonl 每次观察到的压实一行，含沉默的
-  memory/atoms.jsonl  持久原子，每行一条 JSON 记录
+  memory/atoms.jsonl  每个有效记忆簇或墓碑各占一行 JSON
   memory/metrics.json 有上限的事件计数
   index.json          派生缓存 —— 可安全删除
   settings/<key>.json 按项目的覆盖设置
 ```
 
-原子 id 是内容寻址的（类型与规范化文本的哈希），所以同一句话被看到两次只会强化同一条记录。`memory_forget` 写入墓碑而不是删行，因此后续提取无法让它复活。损坏的文件会被改名隔离并报告，而不是被悄悄替换。
+旧的单原子记录可以直接读取，在下一次实际写入时迁移为簇。原子 ID、来源、常驻规则和墓碑保留。重复观察到同一句话会强化同一个原子。`memory_forget` 写入墓碑，阻止后续重新提取这条记忆。
 
 ## 哪些测过，哪些没测
 
@@ -146,11 +175,8 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 
 **没测**：
 
-- **Router 准确率——零测量。** Router 子代理从未对真实模型运行过。测试用桩覆盖了超时、中止、畸形回复与未知 id；但没有任何一次真实 spawn 被观察到并产出真实选择。它的 `smart` 触发率同样未测：升级判据写在 `decideRoute` 里，但它实际多频繁触发，没有数字。
-- **全量扫描的成本。** `gateAtoms` 每次召回都会给每个活跃原子打分（`core/gate.js`）。本机实测——401 条记录的存储——一次 `readAtoms` 约 5.6 ms，一次 `gateAtoms` 约 9.4 ms；在均匀合成原子上，100 / 200 / 400 / 800 条时分别约 0.7 / 1.0 / 1.6 / 3.3 ms，大致呈线性。**没有倒排索引。** 常驻原子的选择是独立的一**轮**（pass），但复用同一次扫描，因此并不构成独立的候选通道。
-- **`atoms.jsonl` 的解析成本。** 每次召回都会重读并重解析整个文件（`lib/recall.js`），没有进程内快照缓存。任何缓存都必须支持跨进程失效（另一个会话、另一个进程、或 `memory_forget` 都可能改写该文件），所以这是一个设计议题，而不是一个补丁。
-
-检索是词法的，不是语义的。Router 超时会降级到确定性选择，所以最坏情况是漏掉一次改进，而不是打断这一步。
+- **路由模型的准确率和调用频率。** 使用模拟路由模型验证了超时、中止、格式错误与未知 ID。尚未测量真实 DSH 路由模型的准确率和 `smart` 档位的调用频率。
+- **记忆簇召回的性能。** 每次仍需解析 `atoms.jsonl`，再对匹配簇中的原子排序。现有的全库扫描性能数据来自迁移之前。
 
 ## 它不会做什么
 
@@ -163,8 +189,8 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 
 ```powershell
 npm run setup        # 提取并链接宿主包（一次，幂等）
-npm test             # 14 个纯 core/ 层单元测试
-npm run test:host    # 28 项按序链接的对真实 harness 检查
+npm test             # 单元测试
+npm run test:host    # 宿主集成测试
 ```
 
 宿主套件覆盖：harness 强制的工具 schema、注入与去重、经真实事件的完整「压实 → 召回 → 遗忘」闭环、安全与路径拒绝、优雅降级、manifest 兼容性、面板 HTTP 行为、按项目设置，以及 Client 半边。被跳过的检查会打印 `SKIP`，它什么也不能证明。
@@ -175,10 +201,10 @@ npm run test:host    # 28 项按序链接的对真实 harness 检查
 
 ```
 core/   纯 Node，不 import DSH —— 可测试的核心
-        memory.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
+        memory.js  clusters.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
         extract.js  config.js  index.js  search.js  store.js  paths.js  ...
 lib/    cordis 层：index.js  tools.js  commands.js  panel.js  recall.js
-        router.js  semantic.js  delegate.js  compaction-memory.js
+        recall-review.js  router.js  semantic.js  delegate.js  compaction-memory.js
 client.js  侧边栏面板（Client 半边）
 tests/     unit/（node --test）与 *.mjs 宿主检查
 docs/      设计说明与文档提议

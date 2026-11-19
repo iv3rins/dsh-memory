@@ -20,6 +20,13 @@ export const ROUTER_TIERS = Object.freeze(['always', 'smart', 'off'])
  */
 export const ROUTER_STRATEGIES = Object.freeze(['task', 'compliance', 'orient'])
 
+/** Protocols supported by the profile-scoped routing model connection. */
+export const ROUTER_PROTOCOLS = Object.freeze([
+  'openai-chat-completions',
+  'openai-responses',
+  'anthropic-messages',
+])
+
 /** Every default in one place, so documentation and behavior cannot drift apart. */
 export const DEFAULTS = Object.freeze({
   /** Master switch for tools, prompt section, and context injection. */
@@ -67,19 +74,27 @@ export const DEFAULTS = Object.freeze({
   /**
    * Three-tier retrieval routing.
    *
-   * `off` never spends a model call; `always` always asks the router subagent;
+   * `off` never spends a model call; `always` always asks the routing model;
    * `smart` asks only when deterministic gating comes back empty or weak. The
    * default is `smart` *with no router route configured*, which resolves to the
    * deterministic path: nothing is spent until a provider and model are named.
    */
   routerTier: 'smart',
-  /** Provider id for the router subagent; empty disables router calls. */
+  /** Provider id for the routing model; empty disables router calls. */
   routerProvider: '',
-  /** Model id for the router subagent; empty disables router calls. */
+  /** Model id for the routing model; empty disables router calls. */
   routerModel: '',
-  /** Reasoning effort for the router subagent; empty inherits the parent's. */
+  /** Reasoning effort for the routing model; empty inherits the parent's. */
   routerReasoningEffort: '',
-  /** Milliseconds allowed for one router subagent run. */
+  /** Profile-only provider root; credentials stay in the credential store. */
+  routerBaseUrl: '',
+  /** Wire protocol used by the profile-scoped routing model connection. */
+  routerProtocol: 'openai-chat-completions',
+  /** Legacy full loopback chat/completions endpoint, without stored credentials. */
+  localRouterEndpoint: '',
+  localRouterModel: '',
+  localRouterMaxRounds: 2,
+  /** Milliseconds for a routing-model request. */
   routerTimeoutMs: 20000,
   /** Ask the router at most once per this many steps (1 = every step). */
   routerCooldownSteps: 1,
@@ -202,6 +217,11 @@ export function normalizeConfig(raw) {
     routerTier: choice(input.routerTier, DEFAULTS.routerTier, ROUTER_TIERS),
     routerProvider: text(input.routerProvider, DEFAULTS.routerProvider),
     routerModel: text(input.routerModel, DEFAULTS.routerModel),
+    routerBaseUrl: text(input.routerBaseUrl, DEFAULTS.routerBaseUrl),
+    routerProtocol: choice(input.routerProtocol, DEFAULTS.routerProtocol, ROUTER_PROTOCOLS),
+    localRouterEndpoint: text(input.localRouterEndpoint, DEFAULTS.localRouterEndpoint),
+    localRouterModel: text(input.localRouterModel, DEFAULTS.localRouterModel),
+    localRouterMaxRounds: number(input.localRouterMaxRounds, DEFAULTS.localRouterMaxRounds, 1, 4),
     routerReasoningEffort: text(input.routerReasoningEffort, DEFAULTS.routerReasoningEffort),
     routerTimeoutMs: number(input.routerTimeoutMs, DEFAULTS.routerTimeoutMs, 1000, 600000),
     routerCooldownSteps: number(input.routerCooldownSteps, DEFAULTS.routerCooldownSteps, 1, 50),
@@ -229,7 +249,7 @@ export function normalizeConfig(raw) {
 }
 
 /**
- * Whether a router subagent route is fully configured.
+ * Whether a DSH routing model is fully configured.
  *
  * A provider without a model (or the reverse) is a half-written config, not a
  * request to guess: the plugin treats it as unconfigured and stays on the

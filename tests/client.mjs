@@ -195,6 +195,8 @@ assert.deepEqual(exported.inject.slice().sort(), ['locale', 'slots'], 'it inject
   const hostPanel = await import('../lib/panel.js')
   assert.equal(source.includes(hostPanel.STATUS_PATH), true, 'the Client asks the status route the Host serves')
   assert.equal(source.includes(hostPanel.CONFIG_PATH), true, 'the Client posts to the config route the Host serves')
+  assert.ok(typeof hostPanel.ROUTER_MODELS_PATH === 'string' && source.includes(hostPanel.ROUTER_MODELS_PATH), 'the Client uses the Host model discovery route')
+  assert.ok(typeof hostPanel.ROUTER_CONNECTION_PATH === 'string' && source.includes(hostPanel.ROUTER_CONNECTION_PATH), 'the Client uses the Host router connection route')
   assert.equal(hostPanel.STATUS_PATH.startsWith('/project-memory/'), true, 'the route is namespaced to this plugin')
 }
 
@@ -238,5 +240,49 @@ assert.deepEqual(exported.inject.slice().sort(), ['locale', 'slots'], 'it inject
   }
 }
 
+// --- 7. An unreported connection is not a refusal to store keys. ---
+{
+  let Dashboard
+  exported.apply({
+    effect: (fn) => fn(),
+    locale: { register: () => {}, bind: () => (key) => key },
+    slots: { inject: (_slot, callback) => callback(), register: (spec, component) => {
+      if (spec.name === 'main') Dashboard = component
+    } },
+  })
+
+  function* render(node) {
+    if (node == null || typeof node !== 'object') { yield node; return }
+    if (typeof node.type === 'function') { yield* render(node.type(node.props)); return }
+    yield node
+    for (const child of node.children) yield* render(child)
+  }
+
+  const useState = reactStub.useState
+  function settings(status) {
+    reactStub.useState = (initial) => useState(initial?.phase === 'loading'
+      ? { phase: 'ready', data: { root: null, settings: {}, ...status }, refreshing: false }
+      : initial === 'overview' ? 'settings' : initial)
+    try { return [...render(Dashboard({ t: (key) => key }))] }
+    finally { reactStub.useState = useState }
+  }
+
+  for (const status of [{}, { connection: {} }]) {
+    const nodes = settings(status)
+    assert.ok(!nodes.includes('connection.keyUnavailable'), 'missing capability must not be presented as explicitly unavailable')
+    assert.ok(nodes.includes('connection.statusUnknown'), 'missing capability explains the connection status problem')
+    assert.ok(!nodes.some((node) => node?.type === 'form'), 'an unreported connection cannot be submitted')
+    assert.ok(nodes.includes('connection.policy'), 'DSH routing settings remain available')
+  }
+
+  for (const available of [false, true]) {
+    const nodes = settings({ connection: { baseUrl: 'http://127.0.0.1:11434/v1', credentialsAvailable: available } })
+    assert.ok(nodes.includes(available ? 'connection.keyOptional' : 'connection.keyUnavailable'))
+    assert.equal(nodes.find((node) => node?.props?.type === 'password')?.props?.disabled, !available)
+    const fetchButton = nodes.find((node) => node?.type === 'button' && node.children.includes('connection.fetch'))
+    assert.equal(fetchButton?.props.disabled, false, 'model discovery remains available without a credential store')
+  }
+}
+
 delete globalThis.window
-console.log('CLIENT OK: the panel registers a matching sidebar entry and main panel, every string it asks for exists in both languages with the same placeholders, and its routes and choices match the Host')
+console.log('CLIENT OK: registration, locales, routes, choices, and all three credential capability states')

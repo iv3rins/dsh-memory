@@ -484,7 +484,7 @@ export function gateAtoms(input) {
 
 /**
  * Decide how this call should retrieve: nothing, deterministic gating, or a
- * router subagent.
+ * routing model.
  *
  * This is the whole three-tier setting in one function. `off` never routes,
  * `always` always spends the model call, and `smart` spends it only when the
@@ -503,15 +503,15 @@ export function gateAtoms(input) {
 export function decideRoute(input) {
   const stored = input.storedAtoms ?? 0
   if (stored === 0) return { route: 'off', reason: 'no memory atoms are stored for this project yet' }
-  if (input.tier === 'off') return { route: 'off', reason: 'router tier is "off": deterministic gating only, no router call' }
+  if (input.tier === 'off') return { route: 'off', reason: 'router tier is "off": deterministic gating only, no routing-model call' }
   if (input.routerAvailable !== true) {
-    return { route: 'deterministic', reason: 'router tier wants a subagent but the subagents service is unavailable' }
+    return { route: 'deterministic', reason: 'the routing model is unavailable' }
   }
   if (input.cooldown === true) {
-    return { route: 'deterministic', reason: 'a router call already ran for this turn; reusing its atoms' }
+    return { route: 'deterministic', reason: 'the routing model already ran for this turn; reusing its atoms' }
   }
   if (input.tier === 'always') {
-    return { route: 'subagent', reason: 'router tier is "always": every call asks the router subagent' }
+    return { route: 'subagent', reason: 'router tier is "always": every call asks the routing model' }
   }
   // smart
   const gating = input.gating
@@ -525,12 +525,12 @@ export function decideRoute(input) {
     return {
       route: 'subagent',
       reason: gating.selected.length === 0
-        ? 'deterministic gating selected nothing; asking the router subagent'
-        : 'deterministic gating found no relevant atom (only standing rules apply); asking the router subagent',
+        ? 'deterministic gating selected nothing; asking the routing model'
+        : 'deterministic gating found no relevant atom (only standing rules apply); asking the routing model',
     }
   }
   if (gating.confidence === 'weak') {
-    return { route: 'subagent', reason: `deterministic gating is weak (${gating.reasons.at(-1) ?? 'low relevance'}); asking the router subagent` }
+    return { route: 'subagent', reason: `deterministic gating is weak (${gating.reasons.at(-1) ?? 'low relevance'}); asking the routing model` }
   }
   return { route: 'deterministic', reason: `deterministic gating is confident (coverage ${gating.coverage.toFixed(2)})` }
 }

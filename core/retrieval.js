@@ -2,7 +2,7 @@
  * Two-stage retrieval with an optional task intent.
  *
  * Stage 1 is deterministic and cheap: scope, category, kind, status and priority narrow
- * the store to candidates. Stage 2 is the existing router subagent, which re-ranks those
+ * the store to candidates. Stage 2 is the routing model, which re-ranks those
  * candidates and may add atoms stage 1 missed.
  *
  * The design point that matters most is the **category supplement**. A deterministic

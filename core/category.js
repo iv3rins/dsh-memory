@@ -54,6 +54,11 @@ export const CATEGORY_CATALOG = Object.freeze([
   { id: 'dom:storage', dimension: 'dom', label: 'storage', color: 'stone', keywords: ['store', 'jsonl', 'database', 'sqlite', 'schema', 'migration', 'persist'] },
   { id: 'dom:ui', dimension: 'dom', label: 'ui', color: 'fuchsia', keywords: ['ui', 'panel', 'render', 'style', 'layout', 'view'] },
   { id: 'dom:process', dimension: 'dom', label: 'process', color: 'emerald', keywords: ['process', 'workflow', 'compaction', 'compact', 'session', 'handshake'] },
+  { id: 'dom:security', dimension: 'dom', label: 'security', color: 'crimson', keywords: ['security', 'authentication', 'authorization', 'credential', 'permission', '鉴权', '权限', '凭据', '安全'] },
+  { id: 'dom:performance', dimension: 'dom', label: 'performance', color: 'gold', keywords: ['performance', 'latency', 'throughput', 'benchmark', '性能', '延迟', '吞吐'] },
+  { id: 'dom:config', dimension: 'dom', label: 'configuration', color: 'lavender', keywords: ['configuration', 'config', 'settings', 'environment variable', '配置', '环境变量'] },
+  { id: 'dom:deployment', dimension: 'dom', label: 'deployment', color: 'sienna', keywords: ['deployment', 'deploy', 'rollout', 'rollback', 'container', '部署', '容器', '回滚'] },
+  { id: 'dom:compatibility', dimension: 'dom', label: 'compatibility', color: 'navy', keywords: ['compatibility', 'backward compatible', 'legacy', 'deprecation', '兼容', '弃用'] },
   { id: 'dom:general', dimension: 'dom', label: 'general', color: 'gray', keywords: [] },
 ])
 
@@ -187,7 +192,8 @@ export function deriveCategories(atom, options = {}) {
       if (entry.keywords.length === 0) continue
       let hits = 0
       for (const keyword of entry.keywords) {
-        if (keyword.includes(' ') ? text.includes(keyword) : textWords.has(keyword)) hits += 1
+        const phrase = keyword.includes(' ') || /\p{Script=Han}/u.test(keyword)
+        if (phrase ? text.includes(keyword) : textWords.has(keyword)) hits += 1
       }
       if (hits > 0) scored.push({ id: entry.id, hits })
     }

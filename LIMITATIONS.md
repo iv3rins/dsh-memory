@@ -7,7 +7,7 @@ harder to correct than an acknowledged blank.
 
 ## Verified against a real host
 
-- Mounting into a real cordis context with the real `ToolRuntime`, registering all 15
+- Mounting into a real cordis context with the real `ToolRuntime`, registering all 18
   tools, executing them through the registry's own checks, and disposing cleanly.
   (`tests/mount.mjs`)
 - The harness's enforced JSON Schema subset accepts every tool declaration.
@@ -17,7 +17,7 @@ harder to correct than an acknowledged blank.
 - State, decisions, blockers, and the document index survive a simulated restart, and
   a real moving git HEAD makes the memory report itself stale instead of fresh.
   (`tests/continuity.mjs`)
-- All 15 tools still register and respond when `commands` and `workingDirectory` are
+- All 18 tools still register and respond when `commands` and `workingDirectory` are
   absent. (`tests/degrade.mjs`)
 - Protected paths are refused and the originals stay byte-identical; a hostile
   proposal title cannot redirect a write out of `docs/proposals/`.
@@ -60,18 +60,13 @@ harder to correct than an acknowledged blank.
   session, but that session was not task-heavy: no real compaction, no resume, no branch
   switch, and no long-horizon multi-session use. Those are the conditions the plugin is
   designed for and the ones it has been least exposed to.
-- **The router subagent has never run against a live model.** `runRouter` is covered by
-  unit tests with a stubbed delegate (including timeout, abort, malformed reply, and
-  unknown ids), and the delegate's construction is checked against the real
-  `startActivation` signature — but no real spawn has been observed producing a real
-  selection. The `smart` tier degrades to deterministic selection if the router fails,
-  so the failure mode is a missed improvement, not a broken step.
-- **The router's prompt is therefore unmeasured.** Three strategies exist (`task`,
-  `compliance`, `orient`) and each sends different instructions, but no accuracy figure
-  is claimed for any of them, and none has been compared against another on a real model.
-  What *is* structurally guaranteed is the floor: standing atoms are selected before the
-  router is consulted, so an empty, malformed, or timed-out answer cannot remove a hard
-  rule. That is a property of the selection order, not a claim about model quality.
+- **Live routing quality remains unmeasured.** `runRouter` tests use a stub delegate
+  to cover abstention, timeouts, cancellation, malformed replies and unknown IDs. Tests
+  also check the DSH delegate against the host's `startActivation` contract.
+- **The execution model approves each proposed atom.** A configured routing model can
+  abstain. If it abstains or its call fails, that lookup adds no recalled text. The
+  separate project baseline continues to load. Deterministic recall can reserve part
+  of its budget for standing constraints.
 - **The panel has never been rendered by a human.** Its registration, dictionaries, and
   route agreement are asserted statically (`tests/client.mjs`), and its endpoints are
   exercised over real HTTP (`tests/panel.mjs`), but no browser has drawn it: layout,
@@ -90,10 +85,10 @@ harder to correct than an acknowledged blank.
 - **Search is lexical.** Token matching with weighted fields — no embeddings, no
   synonyms, no stemming beyond lowercasing. A query in different words than the
   document will miss. `memory_search` is a finder, not a understanding.
-- **Atom scoring is lexical too.** The gate ranks by overlap, kind, reinforcement, and
-  recency. A memory phrased nothing like the request will rank low — which is why hard
-  constraints get a capped share of the budget regardless of wording, and why the router
-  tier exists at all.
+- **Cluster and atom scoring are lexical.** Cluster lookup matches vocabulary, tags and
+  paths. Atom scoring uses overlap, kind, reinforcement and recency. Different wording
+  can miss the right cluster. An execution model can supply more specific terms and
+  evidence when asking for a replacement proposal.
 - **Atoms are not authoritative documents.** A recalled atom is a sentence with
   provenance, not a spec. It can be stale, it can be an oversimplification of what the
   summary said, and it is framed as data. Anything that matters belongs in a document,
@@ -101,13 +96,12 @@ harder to correct than an acknowledged blank.
 - **`memory_forget` is a tombstone, not a deletion.** The record stays in
   `atoms.jsonl` as evidence and the tombstone is sticky, so re-extraction cannot undo
   the decision. A reader of the file still sees the text.
-- **One router call per step, at most.** `routerCooldownSteps` and the per-turn identity
-  cache keep `always` from spending twice on the same request, and `routerTimeoutMs`
-  bounds a single call. A slow router costs latency, not the step: the deterministic
-  answer is used instead.
-- **Router output is untrusted.** Only ids from the supplied digest are honoured; an id
-  the router invents is discarded and counted in `rejected`. The router never writes to
-  the store.
+- **One routing model call per lookup, at most.** A hook or an explicit lookup can
+  propose memory. The execution model can request more rounds with `memory_intent`.
+  `routerTimeoutMs` bounds each routing model call.
+- **The routing model may propose only offered IDs.** Code validates the selection
+  before creating a proposal. Approval re-reads the eligible records before delivering
+  their text.
 - **Extraction is not as selective as "conservative" suggests.** A deterministic parser,
   not a model call, and it treats most prose as a possible fact. Measured on real
   summaries it will turn `The quick brown fox. It jumped.` into a `fact` atom, and it
@@ -132,7 +126,7 @@ harder to correct than an acknowledged blank.
 - **No cross-project query.** One project root per call. A monorepo's sub-projects are
   separate memories.
 - **The sidebar panel reads; it does not edit memory.** It reports counts, the ledger,
-  and the router settings, and it can change those settings. There is no control that
+  and the routing model settings, and it can change those settings. There is no control that
   writes, edits, or deletes an atom: memory is written by compaction and by tools that
   carry provenance and honour tombstones, and a browser button doing either would bypass
   both. Removal is `memory_forget`.

@@ -22,6 +22,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs'
 import path from 'node:path'
@@ -45,8 +46,9 @@ export function readText(absolute) {
   let stat
   try {
     stat = statSync(absolute)
-  } catch {
-    return { ok: false, reason: 'absent' }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { ok: false, reason: 'absent' }
+    return { ok: false, reason: 'unreadable', error }
   }
   if (!stat.isFile()) return { ok: false, reason: 'unreadable' }
   if (stat.size > MAX_DOCUMENT_BYTES) return { ok: false, reason: 'too-large' }
@@ -76,7 +78,7 @@ export function writeTextAtomic(absolute, text) {
     mkdirSync(directory, { recursive: true })
     handle = openSync(temporary, 'wx')
     const bytes = Buffer.from(text, 'utf8')
-    writeSync(handle, bytes)
+    writeFileSync(handle, bytes)
     fsyncSync(handle)
     closeSync(handle)
     handle = undefined

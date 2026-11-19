@@ -33,8 +33,10 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'project-memory'
     /** Host route that serves the snapshot. */
     const STATUS_PATH = '/project-memory/status'
-    /** Host route that reads and writes the router settings. */
+    /** Host route that reads and writes the routing model settings. */
     const CONFIG_PATH = '/project-memory/config'
+    const ROUTER_MODELS_PATH = '/project-memory/router-models'
+    const ROUTER_CONNECTION_PATH = '/project-memory/router-connection'
 
     /**
      * The routing tiers and strategies are driven by `data.choices`, which the Host fills
@@ -48,8 +50,8 @@ window.__ModuleLoader__.load({
       'tier.always': 'always',
       'tier.smart': 'smart',
       'tier.off': 'off',
-      'tier.always.desc': '每一步都问一次副模型。需要下面填好提供方和模型。',
-      'tier.smart.desc': '只在确定性打分没结果或很弱时才问副模型。',
+      'tier.always.desc': '每次符合条件的召回都调用路由模型。',
+      'tier.smart.desc': '确定性匹配较弱或为空时调用路由模型。',
       'tier.off.desc': '只做确定性打分，永远不调用模型。',
       'strategy.task': 'task',
       'strategy.compliance': 'compliance',
@@ -58,8 +60,10 @@ window.__ModuleLoader__.load({
       'strategy.compliance.desc': '优先管着这些文件的规则与更正，即使字面看起来无关。',
       'strategy.orient.desc': '优先「这个子系统怎么运作、为什么」，适合想弄懂而不是想动手的请求。',
       'scope.hint.project': '改动只写进这个项目的 .dsh-memory，别的项目不受影响。',
-      'router.status.unconfigured': '未配置副模型，当前只做确定性选择。',
-      'router.status.noservice': '宿主没装 subagent provider，即使填了模型也不会调用。',
+      'router.status.unconfigured': '未配置路由模型，当前只做确定性选择。',
+      'router.status.local': '已配置独立路由模型。',
+      'router.status.localIncomplete': '独立路由模型配置无效。',
+      'router.status.noservice': '当前宿主无法调用 DSH 路由模型。',
       'panel.title': '项目记忆',
       'panel.open': '打开项目记忆',
       'panel.loading': '正在读取…',
@@ -85,22 +89,49 @@ window.__ModuleLoader__.load({
       'compactions.row.noTime': '时间未知',
       'compactions.total': '累计 {total} 次，{atoms} 条原子',
       'atoms.limit': '已达上限 {limit} 条：更新的原子会挤掉较弱的旧原子。',
-      'router.title': '记忆路由',
-      'router.provider': '副模型提供方',
-      'router.model': '副模型',
-      'router.provider.hint': '留空则完全不做模型调用。',
-      'router.strategy.hint': '策略不同，发给副模型的提示词也不同。',
+      'router.title': '路由模型',
+      'router.provider': '路由模型提供方',
+      'router.model': '路由模型',
+      'router.provider.hint': '用于 DSH 路由模型。独立路由模型优先。',
+      'router.strategy.hint': '此策略决定路由模型收到的检索指令。',
       'router.save': '保存',
       'router.saving': '保存中…',
       'router.saved': '已保存',
       'router.failed': '保存失败',
       'router.readonly': '这个 profile 不支持保存设置。',
       'recall.line': '每次最多 {budget} tokens、{limit} 条',
-      'project.title': '项目',
-      'project.current': '当前会话',
+      'project.switch': '切换项目',
+      'project.pick': '选择最近的项目',
+      'connection.title': '路由模型',
+      'connection.configure': '配置路由模型',
+      'connection.scope': '适用于当前 Profile 的所有项目。调用路由模型时，任务意图和记忆候选会发送到此地址。',
+      'connection.base': 'Base URL',
+      'connection.baseHint': '填写 OpenAI 兼容的 API 根地址，例如 http://127.0.0.1:11434/v1。远程服务须使用 HTTPS。',
+      'connection.key': 'API Key',
+      'connection.keySaved': '此地址已保存密钥。留空可继续使用。',
+      'connection.keyOptional': '不需要密钥时留空。',
+      'connection.keyUnavailable': '当前宿主的凭据服务不可用，只能连接不需要密钥的模型服务。',
+      'connection.statusUnknown': '无法获取路由模型连接状态。请确认前端与宿主加载了同一版本的项目记忆插件。',
+      'connection.clearKey': '清除此地址已保存的密钥',
+      'connection.models': '模型',
+      'connection.fetch': '获取模型',
+      'connection.fetching': '正在获取…',
+      'connection.pick': '选择模型',
+      'connection.empty': '此服务未返回可选模型。',
+      'connection.save': '使用此模型',
+      'connection.disconnect': '恢复 DSH 路由模型',
+      'connection.disconnected': '已恢复 DSH 路由模型设置。',
+      'connection.saved': '已保存为路由模型。',
+      'connection.mode': '路由模型：{model}',
+      'connection.off': '路由模型已停用',
+      'connection.none': '未配置路由模型',
+      'connection.policy': '调用策略与 DSH 路由模型',
+      'connection.details': '功能开关与容量',
+      'connection.error.url': '请填写有效的 HTTPS 地址或本机回环 HTTP 地址。',
+      'connection.error.key': '无法使用 API Key。请检查密钥或凭据服务。',
+      'connection.error.fetch': '获取模型失败。请检查地址、API Key 和服务状态。',
+      'connection.error.save': '未能保存模型连接。请重试或检查 Profile 是否可写。',
       'project.none': '还没有登记任何项目。在某个项目里开始一次会话后，它就会出现在这里。',
-      'project.atoms': '{count} 条原子',
-      'project.noMemory': '尚未建立记忆',
       'scope.global': '全局（所有项目）',
       'scope.project': '仅本项目',
       'scope.global.hint': '改动写进 profile 配置，对所有项目生效。',
@@ -109,14 +140,12 @@ window.__ModuleLoader__.load({
 
       'nav.back': '返回',
       'nav.refresh': '刷新',
-      'nav.settings': '设置',
-      'nav.crumbRoot': '项目记忆',
       'page.noProject': '未确定项目',
       'page.refreshing': '正在刷新…',
       'tab.overview': '概览',
       'tab.explorer': '记忆浏览',
       'tab.compactions': '压实记录',
-      'tab.router': '路由轨迹',
+      'tab.router': '路由模型记录',
       'tab.settings': '设置',
       'overview.live': '有效记忆',
       'overview.standing': '常驻约束',
@@ -124,8 +153,8 @@ window.__ModuleLoader__.load({
       'overview.tierNone': '生命周期未启用',
       'overview.lastCompact': '最近一次压实',
       'overview.lastCompactNone': '还没有压实记录',
-      'overview.lastRouter': '最近一次记忆路由',
-      'overview.lastRouterNone': '还没有路由记录',
+      'overview.lastRouter': '路由模型调用',
+      'overview.lastRouterNone': '还没有路由模型调用记录',
       'overview.capacity': '存储容量',
       'overview.capacityFull': '已达到上限：新原子会挤掉较弱的旧原子，旧原子不会从磁盘删除。',
       'overview.capacityOk': '还有 {headroom} 条余量。',
@@ -166,18 +195,18 @@ window.__ModuleLoader__.load({
       'capacity.forgotten': '已遗忘',
       'capacity.records': '总记录',
       'capacity.coldHint': 'Cold 记忆仍在存储中，只是默认不注入上下文，并未删除。',
-      'trace.title': '路由轨迹',
-      'trace.none': '还没有路由记录。开启 always 触发策略后，每一步都会留下轨迹。',
+      'trace.title': '路由模型记录',
+      'trace.none': '还没有路由模型调用记录。',
       'trace.intent': 'Task Intent',
-      'trace.intentNone': '未提供（主模型尚未调用 memory_intent）',
+      'trace.intentNone': '执行模型尚未调用 memory_intent',
       'trace.candidates': '候选数量',
-      'trace.routerOk': '副模型调用',
+      'trace.routerOk': '路由模型调用',
       'trace.categories': '选中分类',
       'trace.hot': 'Hot 记忆',
       'trace.cold': 'Cold 引用',
       'trace.packageTokens': 'Memory Package Token',
       'trace.delivery': '交付状态',
-      'trace.delivered': '已交付到主模型请求',
+      'trace.delivered': '已交付到执行模型请求',
       'trace.notDelivered': '未交付',
       'trace.latency': '耗时',
       'trace.error': '错误',
@@ -188,7 +217,7 @@ window.__ModuleLoader__.load({
       'settings.taskIntent': 'Task Intent 协议',
       'settings.intentCache': '意图缓存',
       'settings.metrics': '指标采集',
-      'settings.router': '副模型路由',
+      'settings.router': 'DSH 路由模型',
       'settings.capacity': '记忆容量',
       'settings.on': '已开启',
       'settings.off': '已关闭',
@@ -199,8 +228,8 @@ window.__ModuleLoader__.load({
       'tier.always': 'always',
       'tier.smart': 'smart',
       'tier.off': 'off',
-      'tier.always.desc': 'Asks the router model on every step. Needs a provider and a model below.',
-      'tier.smart.desc': 'Asks the router model only when deterministic scoring comes back empty or weak.',
+      'tier.always.desc': 'Calls the routing model for every eligible recall.',
+      'tier.smart.desc': 'Calls the routing model when deterministic matches are weak or absent.',
       'tier.off.desc': 'Deterministic scoring only. No model call, ever.',
       'strategy.task': 'task',
       'strategy.compliance': 'compliance',
@@ -209,8 +238,10 @@ window.__ModuleLoader__.load({
       'strategy.compliance.desc': 'Prioritise the rules and corrections that govern the files in play, even when their wording looks unrelated.',
       'strategy.orient.desc': 'Prioritise how the subsystem works and why, for requests that ask to understand rather than to act.',
       'scope.hint.project': 'Writes only to this project\'s .dsh-memory; other projects are unaffected.',
-      'router.status.unconfigured': 'No router model configured, so only deterministic selection runs.',
-      'router.status.noservice': 'The host has no subagent provider mounted, so a model would not be called even if set.',
+      'router.status.unconfigured': 'No routing model configured. Only deterministic selection runs.',
+      'router.status.local': 'An independent routing model is configured.',
+      'router.status.localIncomplete': 'The independent routing model configuration is invalid.',
+      'router.status.noservice': 'The host cannot call a DSH routing model.',
       'panel.title': 'Project memory',
       'panel.open': 'Open project memory',
       'panel.loading': 'Reading…',
@@ -236,22 +267,49 @@ window.__ModuleLoader__.load({
       'compactions.row.noTime': 'time unknown',
       'compactions.total': '{total} compactions, {atoms} atoms in total',
       'atoms.limit': 'At the {limit}-atom ceiling: newer atoms displace weaker older ones.',
-      'router.title': 'Memory routing',
-      'router.provider': 'Router provider',
-      'router.model': 'Router model',
-      'router.provider.hint': 'Leave both empty and no model is ever called.',
-      'router.strategy.hint': 'The strategy changes the instructions the router model receives.',
+      'router.title': 'Routing model',
+      'router.provider': 'Routing model provider',
+      'router.model': 'Routing model',
+      'router.provider.hint': 'Used by the DSH routing model. An independent routing model takes priority.',
+      'router.strategy.hint': 'Controls the retrieval instructions sent to the routing model.',
       'router.save': 'Save',
       'router.saving': 'Saving…',
       'router.saved': 'Saved',
       'router.failed': 'Save failed',
       'router.readonly': 'This profile cannot persist settings.',
       'recall.line': 'At most {budget} tokens and {limit} atoms per step',
-      'project.title': 'Project',
-      'project.current': 'current session',
+      'project.switch': 'Switch project',
+      'project.pick': 'Choose a recent project',
+      'connection.title': 'Routing model',
+      'connection.configure': 'Configure routing model',
+      'connection.scope': 'Applies to every project in this profile. When called, the routing model receives the task intent and memory candidates at this address.',
+      'connection.base': 'Base URL',
+      'connection.baseHint': 'Enter an OpenAI-compatible API root, such as http://127.0.0.1:11434/v1. Remote services must use HTTPS.',
+      'connection.key': 'API Key',
+      'connection.keySaved': 'A key is saved for this address. Leave blank to keep using it.',
+      'connection.keyOptional': 'Leave blank if the service does not need a key.',
+      'connection.keyUnavailable': 'The host’s credential service is unavailable. You can only connect to model services that do not require a key.',
+      'connection.statusUnknown': 'Routing model connection status is unavailable. Check that the client and host loaded the same Project Memory version.',
+      'connection.clearKey': 'Remove the saved key for this address',
+      'connection.models': 'Model',
+      'connection.fetch': 'Fetch models',
+      'connection.fetching': 'Fetching…',
+      'connection.pick': 'Choose a model',
+      'connection.empty': 'The service returned no available models.',
+      'connection.save': 'Use this model',
+      'connection.disconnect': 'Restore DSH routing model',
+      'connection.disconnected': 'DSH routing model settings restored.',
+      'connection.saved': 'Saved as the routing model.',
+      'connection.mode': 'Routing model: {model}',
+      'connection.off': 'Routing model disabled',
+      'connection.none': 'No routing model configured',
+      'connection.policy': 'Call policy and DSH routing model',
+      'connection.details': 'Feature switches and capacity',
+      'connection.error.url': 'Enter a valid HTTPS or loopback HTTP address.',
+      'connection.error.key': 'Could not use the API key. Check the key or the credential service.',
+      'connection.error.fetch': 'Could not fetch models. Check the address, API key and service status.',
+      'connection.error.save': 'Could not save the model connection. Retry or check that your profile is writable.',
       'project.none': 'No project registered yet. Start a session inside one and it appears here.',
-      'project.atoms': '{count} atoms',
-      'project.noMemory': 'no memory yet',
       'scope.global': 'Global (every project)',
       'scope.project': 'This project only',
       'scope.global.hint': 'Writes to the profile config, so every project follows it.',
@@ -260,14 +318,12 @@ window.__ModuleLoader__.load({
 
       'nav.back': 'Back',
       'nav.refresh': 'Refresh',
-      'nav.settings': 'Settings',
-      'nav.crumbRoot': 'Project memory',
       'page.noProject': 'No project selected',
       'page.refreshing': 'Refreshing…',
       'tab.overview': 'Overview',
       'tab.explorer': 'Explorer',
       'tab.compactions': 'Compactions',
-      'tab.router': 'Router trace',
+      'tab.router': 'Routing model trace',
       'tab.settings': 'Settings',
       'overview.live': 'Live memory',
       'overview.standing': 'Standing rules',
@@ -275,8 +331,8 @@ window.__ModuleLoader__.load({
       'overview.tierNone': 'Lifecycle is off',
       'overview.lastCompact': 'Last compaction',
       'overview.lastCompactNone': 'No compaction recorded yet',
-      'overview.lastRouter': 'Last memory router run',
-      'overview.lastRouterNone': 'No router run recorded yet',
+      'overview.lastRouter': 'Routing model calls',
+      'overview.lastRouterNone': 'No routing model calls recorded yet',
       'overview.capacity': 'Store capacity',
       'overview.capacityFull': 'At the ceiling: new atoms displace weaker old ones. The old rows stay on disk; they are not deleted.',
       'overview.capacityOk': '{headroom} slots free.',
@@ -317,18 +373,18 @@ window.__ModuleLoader__.load({
       'capacity.forgotten': 'Forgotten',
       'capacity.records': 'Records',
       'capacity.coldHint': 'Cold memory is still stored; it is withheld from context by default, not deleted.',
-      'trace.title': 'Router trace',
-      'trace.none': 'No router run recorded yet. With the always tier, every step leaves a trace.',
+      'trace.title': 'Routing model trace',
+      'trace.none': 'No routing model calls recorded yet.',
       'trace.intent': 'Task intent',
-      'trace.intentNone': 'Not supplied (the main model has not called memory_intent)',
+      'trace.intentNone': 'The execution model has yet to call memory_intent',
       'trace.candidates': 'Candidates',
-      'trace.routerOk': 'Router call',
+      'trace.routerOk': 'Routing model calls',
       'trace.categories': 'Selected categories',
       'trace.hot': 'Hot memory',
       'trace.cold': 'Cold references',
       'trace.packageTokens': 'Memory package tokens',
       'trace.delivery': 'Delivery',
-      'trace.delivered': 'Delivered into the model request',
+      'trace.delivered': 'Delivered to the execution model',
       'trace.notDelivered': 'Not delivered',
       'trace.latency': 'Latency',
       'trace.error': 'Error',
@@ -339,7 +395,7 @@ window.__ModuleLoader__.load({
       'settings.taskIntent': 'Task intent protocol',
       'settings.intentCache': 'Intent cache',
       'settings.metrics': 'Metrics collection',
-      'settings.router': 'Router model',
+      'settings.router': 'DSH routing model',
       'settings.capacity': 'Memory capacity',
       'settings.on': 'on',
       'settings.off': 'off',
@@ -397,27 +453,34 @@ window.__ModuleLoader__.load({
 
    min-height:0 is the load-bearing part. A flex item refuses to shrink below its content
    height by default, so without it the child grows to 3548px and never overflows. */
-.pm-root { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; position: relative; }
+.pm-root {
+  --pm-accent: var(--dsh-accent, #4174be);
+  --pm-border: var(--dsh-border, rgba(127,127,127,0.32));
+  --pm-secondary: color-mix(in srgb, currentColor 82%, transparent);
+  display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; position: relative;
+  font-family: Palatino, "Palatino Linotype", Georgia, Cambria, "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  font-size: 13px; line-height: 1.5;
+}
+.pm-root :is(button, input, select, textarea, code, pre) { font-family: inherit; }
 .pm-toolbar {
   flex: 0 0 auto;
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--dsh-border, rgba(127,127,127,0.22));
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--pm-border);
   background: var(--dsh-bg, transparent);
 }
-.pm-toolbar-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
-.pm-crumbs { display: flex; align-items: center; gap: 6px; font-size: 11px; opacity: 0.6; min-width: 0; }
-.pm-crumb { white-space: nowrap; }
-.pm-crumb-sep { opacity: 0.45; }
-.pm-crumb-now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
-.pm-title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
-.pm-sub { font-size: 11px; opacity: 0.55; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.pm-title { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.15; flex: 0 0 auto; }
+.pm-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.pm-toolbar-project { display: grid; gap: 3px; flex: 1 1 18rem; min-width: 0; max-width: 32rem; }
+.pm-sub { font-size: 13px; color: var(--pm-secondary); overflow-wrap: anywhere; }
+.pm-toolbar-router { min-width: 0; display: flex; align-items: center; gap: 12px; margin-inline-start: auto; }
+.pm-model-summary { max-width: 25ch; font-size: 13px; color: var(--pm-secondary); overflow-wrap: anywhere; }
 
 .pm-tbtn {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; gap: 5px;
-  font: inherit; font-size: 12px;
-  padding: 5px 10px; border-radius: 7px;
+  font: inherit; min-height: 44px;
+  padding: 6px 12px; border-radius: 7px;
   border: 1px solid var(--dsh-border, rgba(127,127,127,0.3));
   background: var(--dsh-surface, rgba(127,127,127,0.1));
   color: inherit; cursor: pointer;
@@ -438,10 +501,10 @@ window.__ModuleLoader__.load({
 }
 .pm-tabs::-webkit-scrollbar { display: none; }
 .pm-tab {
-  font: inherit; font-size: 12.5px;
+  font: inherit; min-height: 44px;
   padding: 9px 12px;
   border: 0; border-bottom: 2px solid transparent;
-  background: transparent; color: inherit; opacity: 0.66;
+  background: transparent; color: var(--pm-secondary);
   cursor: pointer; white-space: nowrap;
   transition: opacity 120ms ease, border-color 150ms ease;
 }
@@ -457,13 +520,13 @@ window.__ModuleLoader__.load({
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px 20px 28px;
+  padding: 24px 24px 32px;
   scroll-behavior: smooth;
 }
 @media (prefers-reduced-motion: reduce) {
   .pm-body { scroll-behavior: auto; }
 }
-.pm-page { display: flex; flex-direction: column; gap: 14px; max-width: 1100px; }
+.pm-page { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
 .pm-page.enter { animation: pm-fade 190ms ease both; }
 @keyframes pm-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
@@ -481,8 +544,8 @@ window.__ModuleLoader__.load({
 .pm-card.hover:hover { background: var(--dsh-surface, rgba(127,127,127,0.06)); border-color: var(--dsh-border, rgba(127,127,127,0.34)); }
 .pm-card.lead { border-color: var(--dsh-accent, rgba(90,140,255,0.45)); }
 .pm-card.warn { border-color: rgba(200,150,40,0.5); background: rgba(200,150,40,0.07); }
-.pm-card-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; opacity: 0.6; }
-.pm-metric { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.pm-card-title { font-size: 14px; font-weight: 600; }
+.pm-metric { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .pm-metric-sub { font-size: 11.5px; opacity: 0.62; line-height: 1.45; }
 .pm-headline { font-size: 13.5px; line-height: 1.5; font-weight: 550; }
 
@@ -561,7 +624,7 @@ window.__ModuleLoader__.load({
 .pm-field { display: flex; flex-direction: column; gap: 3px; }
 .pm-field-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.55; }
 .pm-field-value { font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
-.pm-field-value.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.pm-field-value.mono { font-variant-numeric: tabular-nums; }
 .pm-drawer-content {
   font-size: 13px; line-height: 1.6;
   padding: 10px 12px; border-radius: 8px;
@@ -595,12 +658,16 @@ window.__ModuleLoader__.load({
 .pm-choice-head { display: flex; align-items: baseline; gap: 7px; min-width: 0; flex: 1 1 auto; }
 .pm-radio { font-size: 10px; line-height: 1; opacity: 0.45; flex: 0 0 auto; }
 .pm-radio.on { opacity: 1; color: var(--dsh-accent, rgba(90,140,255,0.9)); }
-.pm-choice-title { font-size: 12px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
+.pm-choice-title { font-size: 12px; font-weight: 600; flex: 0 0 auto; }
 .pm-choice-desc { font-size: 11.5px; opacity: 0.62; line-height: 1.45; min-width: 0; flex: 1 1 auto; }
 .pm-ok, .pm-warn { font-size: 11.5px; line-height: 1.5; padding: 6px 9px; border-radius: 6px; }
 .pm-ok { background: var(--dsh-surface, rgba(127,127,127,0.1)); opacity: 0.85; }
 .pm-warn { background: rgba(200,150,40,0.14); border: 1px solid rgba(200,150,40,0.35); }
-.pm-input { width: 100%; font-size: 12.5px; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--dsh-border, rgba(127,127,127,0.3)); background: transparent; color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pm-input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; font-size: 14px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--pm-border); background: var(--dsh-bg, transparent); color: inherit; }
+.pm-toolbar-project select option { color: CanvasText; }
+.pm-input::placeholder { color: var(--pm-secondary); opacity: 1; }
+.pm-input:disabled { opacity: 0.55; }
+.pm-choice:focus-within, .pm-clear-key:focus-within, .pm-details summary:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 .pm-input:focus-visible { outline: 2px solid var(--dsh-accent, rgba(90,140,255,0.9)); outline-offset: 1px; }
 .pm-btn { align-self: flex-start; font-size: 12.5px; padding: 6px 14px; border-radius: 7px; border: 1px solid var(--dsh-border, rgba(127,127,127,0.32)); background: var(--dsh-surface, rgba(127,127,127,0.1)); color: inherit; cursor: pointer; }
 .pm-btn:focus-visible { outline: 2px solid var(--dsh-accent, rgba(90,140,255,0.9)); outline-offset: 2px; }
@@ -610,16 +677,26 @@ window.__ModuleLoader__.load({
 .pm-banner.bad { border: 1px solid var(--dsh-danger, rgba(220,90,90,0.5)); }
 .pm-banner.warn { border: 1px solid rgba(200,150,40,0.4); background: rgba(200,150,40,0.12); }
 
-.pm-projects { display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow-y: auto; overscroll-behavior: contain; }
-.pm-project { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
-.pm-project:hover { background: var(--dsh-surface, rgba(127,127,127,0.09)); }
-.pm-project.on { border-color: var(--dsh-accent, rgba(90,140,255,0.55)); background: var(--dsh-surface, rgba(127,127,127,0.09)); }
-.pm-project:focus-visible { outline: 2px solid var(--dsh-accent, rgba(90,140,255,0.9)); outline-offset: 1px; }
-.pm-project-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
-.pm-project-name { font-size: 12.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pm-project-path { font-size: 10.5px; opacity: 0.5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pm-project-meta { font-size: 10.5px; opacity: 0.6; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
-.pm-tag { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--dsh-accent, rgba(90,140,255,0.2)); }
+.pm-connection, .pm-details { width: 100%; max-width: 720px; }
+.pm-connection h2 { font-size: 19px; line-height: 1.25; margin: 0 0 8px; font-weight: 600; }
+.pm-connection-note { color: var(--pm-secondary); margin: 0; overflow-wrap: anywhere; }
+.pm-connection-form { display: grid; gap: 8px; margin-top: 20px; }
+.pm-form-field { display: grid; min-width: 0; gap: 4px; font-weight: 600; }
+.pm-connection-form > span + .pm-form-field, .pm-model-row { margin-top: 8px; }
+.pm-model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.pm-model-row .pm-btn { align-self: end; }
+.pm-connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.pm-connection .pm-btn { min-height: 44px; font: inherit; }
+.pm-connection .pm-primary { border-color: var(--pm-accent); background: color-mix(in srgb, var(--pm-accent) 14%, transparent); font-weight: 600; }
+.pm-primary:not(:disabled):hover { background: color-mix(in srgb, var(--pm-accent) 22%, transparent); }
+.pm-clear-key { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.pm-clear-key input { margin: 0; }
+.pm-selected-model, .pm-connection-notice { overflow-wrap: anywhere; }
+.pm-connection-notice:not(:empty) { min-height: 1.5em; }
+.pm-connection-notice .pm-warn { display: block; font-size: inherit; }
+.pm-details { border-top: 1px solid var(--pm-border); }
+.pm-details summary { box-sizing: border-box; min-height: 44px; padding-block: 10px; cursor: pointer; }
+.pm-details-content { margin-bottom: 8px; }
 
 .pm-collapse { border: 1px solid var(--dsh-border, rgba(127,127,127,0.22)); border-radius: 10px; overflow: hidden; }
 .pm-collapse-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 13px; cursor: pointer; background: var(--dsh-surface, rgba(127,127,127,0.05)); border: 0; width: 100%; font: inherit; color: inherit; text-align: left; }
@@ -636,7 +713,14 @@ window.__ModuleLoader__.load({
 @media (prefers-reduced-motion: reduce) { .pm-skel { animation: none; opacity: 0.7; } }
 
 @media (max-width: 640px) {
-  .pm-toolbar { padding: 10px 12px; flex-wrap: wrap; }
+  .pm-toolbar { padding: 8px 12px; flex-wrap: wrap; gap: 8px; }
+  .pm-title { flex: 1 1 auto; font-size: 18px; }
+  .pm-toolbar-project { flex: 1 1 100%; max-width: none; order: 2; }
+  .pm-toolbar-router { flex: 1 1 100%; order: 3; justify-content: space-between; }
+  .pm-model-summary { max-width: none; }
+  .pm-connection h2 { font-size: 17px; }
+  /* Keep mobile text inputs above the Safari focus-zoom threshold. */
+  input.pm-input { font-size: 16px; }
   .pm-tabs { padding: 0 12px; }
   .pm-body { padding: 12px 12px 24px; }
   .pm-drawer { width: 100%; }
@@ -645,39 +729,6 @@ window.__ModuleLoader__.load({
 `
 
     // -------------------------------------------------------------------- panel
-
-    /**
-     * One row in the project picker.
-     * @param {{ row: object, selected: boolean, onPick: () => void, t: Function }} props - row data.
-     */
-    function ProjectRow(props) {
-      const { row, selected, onPick, t } = props
-      const meta = row.hasMemory === false ? t('project.noMemory') : fill(t('project.atoms'), { count: row.atoms })
-      return h(
-        'div',
-        {
-          className: selected ? 'pm-project on' : 'pm-project',
-          role: 'button',
-          tabIndex: 0,
-          onClick: onPick,
-          onKeyDown: (event) => {
-            if (event.key === 'Enter' || event.key === ' ') onPick()
-          }
-        },
-        h(
-          'div',
-          { className: 'pm-project-main' },
-          h(
-            'div',
-            { className: 'pm-project-name' },
-            String(row.name),
-            row.current === true ? h('span', { className: 'pm-tag' }, t('project.current')) : null
-          ),
-          h('div', { className: 'pm-project-path' }, String(row.root))
-        ),
-        h('div', { className: 'pm-project-meta' }, meta)
-      )
-    }
 
     /**
      * The main panel.
@@ -872,14 +923,7 @@ function AtomRow(props) {
 
 // ------------------------------------------------------------------- pages
 
-/**
- * Overview: the six numbers the tab exists to answer, plus the project picker.
- *
- * The picker lives here rather than in its own tab because "which project am I looking at"
- * is context, not a setting: it changes what every other number on the page means.
- */
-function OverviewPage(props) {
-  const { data, t, now, projects, selectedRoot, onPick } = props
+function OverviewPage({ data, t, now }) {
   const atoms = data.atoms
   const semantic = data.semantic
   const capacity = data.capacity
@@ -891,26 +935,6 @@ function OverviewPage(props) {
   return h(
     'div',
     { className: 'pm-page enter' },
-    projects.length > 1
-      ? h(
-          'div',
-          { className: 'pm-card' },
-          h('div', { className: 'pm-card-title' }, t('project.title')),
-          h(
-            'div',
-            { className: 'pm-projects' },
-            ...projects.map((row) =>
-              h(ProjectRow, {
-                key: row.key ?? row.root,
-                row,
-                t,
-                selected: selectedRoot !== null && row.root === selectedRoot,
-                onPick: () => onPick(row.root),
-              }),
-            ),
-          ),
-        )
-      : null,
     h(
       'div',
       { className: 'pm-grid' },
@@ -994,7 +1018,7 @@ function OverviewPage(props) {
         : h(
             'div',
             null,
-            h('div', { className: 'pm-headline' }, `${metrics.routerCalls} ${t('trace.routerOk')}`),
+            h('div', { className: 'pm-headline' }, String(metrics.routerCalls)),
             h(
               'div',
               { className: 'pm-hint' },
@@ -1196,15 +1220,15 @@ function RouterTracePage(props) {
   const router = data.router ?? {}
   const recentCount = Array.isArray(data.compactions?.recent) ? data.compactions.recent.length : 0
 
-  // The readiness line from the old panel, kept because it is the answer to "why is
-  // nothing being routed": a filled-in model with no subagent provider looks identical
-  // to a working one until you check this.
-  const readiness =
-    router.serviceAvailable === false
-      ? t('router.status.noservice')
-      : router.provider === '' || router.model === ''
-        ? t('router.status.unconfigured')
-        : null
+  // Configuration status only; opening the panel never probes a model.
+  const readiness = router.tier === 'off' ? null
+    : router.local !== undefined
+      ? (router.local.configured ? t('router.status.local') : t('router.status.localIncomplete'))
+      : router.serviceAvailable === false
+        ? t('router.status.noservice')
+        : router.provider === '' || router.model === ''
+          ? t('router.status.unconfigured')
+          : null
 
   // Every number below is read defensively. A metric the backend has not computed arrives
   // as null, and one it never computed arrives as undefined; both must render as "not
@@ -1262,7 +1286,138 @@ function RouterTracePage(props) {
   )
 }
 
-/** Settings: the router controls (editable) plus the read-only upgrade switches. */
+/** Routing model settings and read-only feature switches. */
+async function postConnection(path, payload, signal) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+  })
+  const body = await response.json()
+  return response.ok ? body : { error: body.error ?? 'request-failed' }
+}
+
+function RouterConnection({ connection, t, onSaved }) {
+  const [baseUrl, setBaseUrl] = React.useState(connection.baseUrl ?? '')
+  const [apiKey, setApiKey] = React.useState('')
+  const [clearKey, setClearKey] = React.useState(false)
+  const [models, setModels] = React.useState(null)
+  const [model, setModel] = React.useState(connection.model ?? '')
+  const [busy, setBusy] = React.useState(null)
+  const [notice, setNotice] = React.useState(null)
+  const request = React.useRef(null)
+
+  React.useEffect(() => () => request.current?.abort(), [])
+
+  const savedUrl = connection.baseUrl ?? ''
+  const inputUrl = baseUrl.trim()
+  let normalizedUrl = inputUrl
+  try { normalizedUrl = new URL(inputUrl).href.replace(/\/+$/, '') } catch { /* Host validates the address. */ }
+  const sameUrl = normalizedUrl === savedUrl
+  const hasKeyHere = connection.hasKey === true && sameUrl
+  const canStoreKey = connection.credentialsAvailable === true
+  const configuredModel = sameUrl && savedUrl !== '' ? connection.model : ''
+  const choices = models ?? (configuredModel ? [configuredModel] : [])
+  const validModel = model !== '' && choices.includes(model)
+  const dirty = !sameUrl || model !== (connection.model ?? '') || apiKey !== '' || clearKey
+
+  function invalidate() {
+    if (request.current !== null) request.current.abort()
+    request.current = null
+    setBusy(null)
+    setModels(null)
+    setModel('')
+    setNotice(null)
+  }
+
+  async function run(action) {
+    if (request.current !== null) return
+    const controller = new AbortController()
+    request.current = controller
+    setBusy(action)
+    setNotice(null)
+    const fetching = action === 'fetch'
+    const disconnecting = action === 'disconnect'
+    const key = canStoreKey ? (clearKey ? '' : apiKey || undefined) : undefined
+    const payload = disconnecting ? { baseUrl: '', model: '' } : {
+      baseUrl: baseUrl.trim(),
+      ...(fetching ? {} : { model }),
+      ...(key === undefined ? {} : { apiKey: key }),
+    }
+    const failed = (code) => setNotice({
+      ok: false,
+      text: code === 'invalid-url' ? t('connection.error.url') : code === 'credentials-unavailable' ? t('connection.error.key') : fetching ? t('connection.error.fetch') : t('connection.error.save'),
+    })
+    try {
+      const body = await postConnection(fetching ? ROUTER_MODELS_PATH : ROUTER_CONNECTION_PATH, payload, controller.signal)
+      if (controller.signal.aborted) return
+      if (body.error) return failed(body.error)
+      if (fetching) {
+        const found = body.models
+        if (!Array.isArray(found)) return failed()
+        setModels(found)
+        setModel((current) => found.includes(current) ? current : found.includes(configuredModel) ? configuredModel : '')
+        if (found.length === 0) setNotice({ ok: true, text: t('connection.empty') })
+      } else {
+        const saved = body.connection
+        if (!saved) return failed()
+        setBaseUrl(saved.baseUrl ?? '')
+        setApiKey('')
+        setClearKey(false)
+        setModel(saved.model ?? '')
+        setModels(null)
+        onSaved(saved)
+        setNotice({ ok: true, text: disconnecting ? t('connection.disconnected') : t('connection.saved') })
+      }
+    } catch {
+      if (!controller.signal.aborted) failed()
+    } finally {
+      if (request.current === controller) {
+        request.current = null
+        setBusy(null)
+      }
+    }
+  }
+
+  const writing = busy === 'save' || busy === 'disconnect'
+  return h('section', { className: 'pm-connection', 'aria-labelledby': 'pm-connection-title' },
+    h('h2', { id: 'pm-connection-title' }, t('connection.title')),
+    h('p', { className: 'pm-connection-note' }, t('connection.scope')),
+    h('form', { className: 'pm-connection-form', onSubmit: (event) => { event.preventDefault(); if (!busy && dirty && validModel) void run('save') } },
+      h('label', { className: 'pm-form-field' },
+        h('span', null, t('connection.base')),
+        h('input', { className: 'pm-input', value: baseUrl, disabled: writing, spellCheck: false, autoCapitalize: 'none', inputMode: 'url', 'aria-describedby': 'pm-base-hint', onChange: (event) => { invalidate(); setClearKey(false); setApiKey(''); setBaseUrl(event.target.value) } }),
+      ),
+      h('span', { id: 'pm-base-hint', className: 'pm-connection-note' }, t('connection.baseHint')),
+      h('label', { className: 'pm-form-field' },
+        h('span', null, t('connection.key')),
+        h('input', { type: 'password', className: 'pm-input', autoComplete: 'off', spellCheck: false, value: apiKey, disabled: writing || clearKey || !canStoreKey, 'aria-describedby': 'pm-key-hint', onChange: (event) => { invalidate(); setApiKey(event.target.value) } }),
+      ),
+      h('span', { id: 'pm-key-hint', className: 'pm-connection-note' }, !canStoreKey ? t('connection.keyUnavailable') : hasKeyHere ? t('connection.keySaved') : t('connection.keyOptional')),
+      hasKeyHere && canStoreKey ? h('label', { className: 'pm-clear-key' },
+        h('input', { type: 'checkbox', checked: clearKey, disabled: writing, onChange: (event) => { invalidate(); setApiKey(''); setClearKey(event.target.checked) } }),
+        t('connection.clearKey'),
+      ) : null,
+      h('div', { className: 'pm-model-row' },
+        h('label', { className: 'pm-form-field' }, h('span', null, t('connection.models')),
+          h('select', { className: 'pm-input', value: validModel ? model : '', disabled: busy !== null || choices.length === 0, title: validModel ? model : undefined, onChange: (event) => { setModel(event.target.value); setNotice(null) } },
+            h('option', { value: '', disabled: true }, t('connection.pick')),
+            ...choices.map((id) => h('option', { key: id, value: id }, id)),
+          ),
+        ),
+        h('button', { type: 'button', className: 'pm-btn', disabled: busy !== null || !baseUrl.trim(), onClick: () => void run('fetch') }, busy === 'fetch' ? t('connection.fetching') : t('connection.fetch')),
+      ),
+      validModel && model.length > 48 ? h('span', { className: 'pm-selected-model' }, model) : null,
+      h('div', { className: 'pm-connection-actions' },
+        h('button', { type: 'submit', className: 'pm-btn pm-primary', disabled: busy !== null || !dirty || !validModel }, busy === 'save' ? t('router.saving') : t('connection.save')),
+        savedUrl || connection.legacy ? h('button', { type: 'button', className: 'pm-btn', disabled: busy !== null, onClick: () => void run('disconnect') }, t('connection.disconnect')) : null,
+      ),
+      h('div', { role: 'status', className: 'pm-connection-notice' }, notice ? h('span', { className: notice.ok ? undefined : 'pm-warn' }, notice.text) : busy === 'fetch' ? t('connection.fetching') : busy === 'disconnect' ? t('router.saving') : null),
+    ),
+  )
+}
+
 function SettingsPage(props) {
   const { data, t, choice, setChoice, saving, saveReason, onSave, scope, setScope, canOverride, resetOverride, overridden } = props
   const settings = data.settings
@@ -1306,13 +1461,22 @@ function SettingsPage(props) {
       h('span', { className: switches[key] === true ? 'pm-chip lead' : 'pm-chip' }, switches[key] === true ? t('settings.on') : t('settings.off')),
     )
 
+  const connection = data.connection
   return h(
     'div',
     { className: 'pm-page enter' },
-    // --- router model, editable -------------------------------------------------
-    h(
-      'div',
-      { className: 'pm-card' },
+    typeof connection?.credentialsAvailable === 'boolean'
+      ? h(RouterConnection, { connection, t, onSaved: props.onConnectionSaved })
+      : h('section', { className: 'pm-connection', 'aria-labelledby': 'pm-connection-title' },
+        h('h2', { id: 'pm-connection-title' }, t('connection.title')),
+        h('p', { className: 'pm-connection-note' }, t('connection.statusUnknown')),
+      ),
+    props.projectNotice,
+    props.projectNotice === null ? h('details', { className: 'pm-details' },
+      h('summary', null, t('connection.policy')),
+      h(
+        'div',
+        { className: 'pm-card pm-details-content' },
       h(
         'div',
         { className: 'pm-head' },
@@ -1354,11 +1518,13 @@ function SettingsPage(props) {
             ),
           )
         : null,
-    ),
-    // --- upgrade switches, read-only -------------------------------------------
-    h(
+      ),
+    ) : null,
+    props.projectNotice === null ? h('details', { className: 'pm-details' },
+      h('summary', null, t('connection.details')),
+      h(
       'div',
-      { className: 'pm-card' },
+      { className: 'pm-card pm-details-content' },
       h('div', { className: 'pm-card-title' }, t('settings.semantic')),
       switchRow('semanticRouting', t('settings.semantic')),
       switchRow('lifecycleEnabled', t('settings.lifecycle')),
@@ -1367,18 +1533,18 @@ function SettingsPage(props) {
       switchRow('intentCacheEnabled', t('settings.intentCache')),
       switchRow('metricsEnabled', t('settings.metrics')),
       h('div', { className: 'pm-hint' }, t('settings.readOnly')),
-    ),
-    // --- capacity ---------------------------------------------------------------
-    h(
+      ),
+      h(
       'div',
-      { className: 'pm-card' },
+      { className: 'pm-card pm-details-content' },
       h('div', { className: 'pm-card-title' }, t('settings.capacity')),
       h('div', { className: 'pm-row' }, h('span', null, t('atoms.live')), h('span', { className: 'pm-num' }, `${data.capacity?.live ?? 0} / ${data.capacity?.limit ?? 0}`)),
       h('div', { className: 'pm-hint' }, fill(t('recall.line'), { budget: settings.recallBudget, limit: settings.recallLimit })),
       // The breakdown, so "400 live" is not a single unexplained number.
       h('div', { className: 'pm-chips' }, ...Object.entries(data.atoms?.byKind ?? {}).map(([k, n]) => h('span', { key: k, className: 'pm-chip' }, `${k} ${n}`))),
       h('div', { className: 'pm-hint' }, t('capacity.coldHint')),
-    ),
+      ),
+    ) : null,
   )
 }
 
@@ -1403,20 +1569,34 @@ function MemoryDashboard(props) {
   const [saveReason, setSaveReason] = React.useState(null)
   const [drawer, setDrawer] = React.useState(null)
   const bodyRef = React.useRef(null)
+  const target = React.useRef(null)
+  const loadVersion = React.useRef(0)
   const now = Date.now()
 
   const load = React.useCallback(async (root) => {
-    setState((current) => ({ phase: current.data === null ? 'loading' : 'ready', data: current.data, reason: null, refreshing: true }))
-    const path = root === null || root === undefined ? STATUS_PATH : `${STATUS_PATH}?project=${encodeURIComponent(root)}`
+    const version = ++loadVersion.current
+    setState((current) => ({ ...current, phase: 'loading', reason: null, refreshing: true }))
+    const path = root === null ? STATUS_PATH : STATUS_PATH + '?project=' + encodeURIComponent(root)
     const result = await getJson(path)
+    if (version !== loadVersion.current) return
     if (result.ok) setState({ phase: 'ready', data: result.data, reason: null, refreshing: false })
-    else setState({ phase: 'error', data: null, reason: result.reason, refreshing: false })
-    return result
+    else setState((current) => ({ ...current, phase: 'error', reason: result.reason, refreshing: false }))
   }, [])
 
   React.useEffect(() => {
-    void load(selected)
-  }, [load, selected])
+    void load(target.current)
+    return () => { loadVersion.current++ }
+  }, [load])
+
+  function pickProject(root) {
+    if (!root || root === (target.current ?? state.data?.root)) return
+    target.current = root
+    setSelected(root)
+    setScope('project')
+    setSaveReason(null)
+    setDrawer(null)
+    void load(root)
+  }
 
   // Mirror the saved settings into the editor until the layer being edited changes.
   React.useEffect(() => {
@@ -1429,10 +1609,12 @@ function MemoryDashboard(props) {
   // disorienting, and the previous scroll offset belongs to the previous page.
   React.useEffect(() => {
     if (bodyRef.current !== null) bodyRef.current.scrollTop = 0
-  }, [tab])
+  }, [tab, selected])
 
   const save = React.useCallback(async () => {
     if (choice === null || state.data === null) return
+    const editingProject = target.current
+    const report = (notice) => { if (editingProject === target.current) setSaveReason(notice) }
     const shown = scope === 'project' ? state.data.settings : state.data.base ?? state.data.settings
     const pending = [
       ['routerTier', choice.routerTier],
@@ -1444,7 +1626,7 @@ function MemoryDashboard(props) {
     setSaveReason(null)
     if (pending.length === 0) {
       setSaving(false)
-      setSaveReason({ ok: true, text: t('router.saved') })
+      report({ ok: true, text: t('router.saved') })
       return
     }
     for (const [key, value] of pending) {
@@ -1458,23 +1640,25 @@ function MemoryDashboard(props) {
         if (!response.ok) {
           setSaving(false)
           const text = String(body.error ?? '')
-          setSaveReason({ ok: false, text: `${t('router.failed')}: ${text.includes('configEditor') ? t('router.readonly') : text || `HTTP ${response.status}`}` })
+          report({ ok: false, text: `${t('router.failed')}: ${text.includes('configEditor') ? t('router.readonly') : text || `HTTP ${response.status}`}` })
           return
         }
       } catch (error) {
         setSaving(false)
-        setSaveReason({ ok: false, text: `${t('router.failed')}: ${error && error.message ? error.message : String(error)}` })
+        report({ ok: false, text: `${t('router.failed')}: ${error && error.message ? error.message : String(error)}` })
         return
       }
     }
     setSaving(false)
-    setSaveReason({ ok: true, text: t('router.saved') })
-    await load(selected)
-  }, [choice, state.data, scope, selected, t, load])
+    report({ ok: true, text: t('router.saved') })
+    await load(target.current)
+  }, [choice, state.data, scope, t, load])
 
   const resetOverride = React.useCallback(
     async (key) => {
       if (state.data === null || state.data.root === null) return
+      const editingProject = target.current
+      const report = (notice) => { if (editingProject === target.current) setSaveReason(notice) }
       setSaving(true)
       try {
         const response = await fetch(`${CONFIG_PATH}?project=${encodeURIComponent(state.data.root)}`, {
@@ -1485,24 +1669,29 @@ function MemoryDashboard(props) {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}))
           setSaving(false)
-          setSaveReason({ ok: false, text: `${t('router.failed')}: ${String(body.error ?? `HTTP ${response.status}`)}` })
+          report({ ok: false, text: `${t('router.failed')}: ${String(body.error ?? `HTTP ${response.status}`)}` })
           return
         }
         setSaving(false)
-        setSaveReason({ ok: true, text: t('router.saved') })
-        await load(selected)
+        report({ ok: true, text: t('router.saved') })
+        await load(target.current)
       } catch (error) {
         setSaving(false)
-        setSaveReason({ ok: false, text: `${t('router.failed')}: ${error && error.message ? error.message : String(error)}` })
+        report({ ok: false, text: `${t('router.failed')}: ${error && error.message ? error.message : String(error)}` })
       }
     },
-    [state.data, selected, t, load],
+    [state.data, t, load],
   )
 
   // --- chrome ---------------------------------------------------------------
   const data = state.data
-  const projectLabel = data?.root ?? (data === null ? '' : t('page.noProject'))
-  const shortRoot = typeof data?.root === 'string' ? data.root.split(/[\\/]/).filter(Boolean).slice(-2).join('/') : t('page.noProject')
+  const projectRoot = selected ?? data?.root ?? ''
+  const projects = Array.isArray(data?.projects) ? data.projects : []
+  const activeModel = data?.connection?.baseUrl && data.connection.model ? data.connection.model
+    : data?.router?.local ? (data.router.local.configured ? data.router.local.model : '')
+      : data?.router?.provider ? data.router.model : ''
+  const modelLabel = data === null ? '' : data.router?.tier === 'off' && (selected === null || selected === data.root) ? t('connection.off') : activeModel
+    ? fill(t('connection.mode'), { model: activeModel }) : t('connection.none')
 
   const tabs = [
     ['overview', t('tab.overview')],
@@ -1515,22 +1704,24 @@ function MemoryDashboard(props) {
   const toolbar = h(
     'div',
     { className: 'pm-toolbar' },
-    // Back returns to the Conversation through the host's layout service. `props.close`
-    // does not exist — the host renders this slot with an empty props object — so the
-    // handler arrives through `inject` instead. Rendering nothing when the layout service
-    // is absent is deliberate: a dead button is worse than none.
     typeof props.onBack === 'function'
-      ? h('button', { className: 'pm-tbtn', onClick: () => props.onBack(), title: t('nav.back') }, `\u2190 ${t('nav.back')}`)
+      ? h('button', { className: 'pm-tbtn', onClick: () => props.onBack() }, t('nav.back'))
       : null,
-    h(
-      'div',
-      { className: 'pm-toolbar-main' },
-      h('div', { className: 'pm-crumbs' }, h('span', { className: 'pm-crumb' }, t('nav.crumbRoot')), h('span', { className: 'pm-crumb-sep' }, '/'), h('span', { className: 'pm-crumb-now' }, shortRoot)),
-      h('div', { className: 'pm-title' }, t('panel.title')),
-      data?.root === null ? h('div', { className: 'pm-sub' }, t('page.noProject')) : h('div', { className: 'pm-sub' }, projectLabel),
+    h('h1', { className: 'pm-title' }, t('panel.title')),
+    h('div', { className: 'pm-toolbar-project' },
+      h('label', { className: 'pm-sr-only', htmlFor: 'pm-project-select' }, t('project.switch')),
+      h('select', { id: 'pm-project-select', className: 'pm-input', value: projectRoot, disabled: projects.length === 0, 'aria-describedby': projectRoot ? 'pm-project-path' : undefined, onChange: (event) => pickProject(event.target.value) },
+        h('option', { value: '', disabled: true }, projects.length > 0 ? t('project.pick') : t('page.noProject')),
+        projectRoot && !projects.some((project) => project.root === projectRoot) ? h('option', { value: projectRoot }, projectRoot) : null,
+        ...projects.map((project) => h('option', { key: project.key ?? project.root, value: project.root }, project.name === project.root ? project.root : project.name + ' · ' + project.root)),
+      ),
+      projectRoot ? h('span', { className: 'pm-sub', id: 'pm-project-path' }, projectRoot) : null,
     ),
-    h('button', { className: 'pm-tbtn', disabled: state.refreshing === true, onClick: () => void load(selected), title: t('nav.refresh') }, state.refreshing === true ? t('page.refreshing') : `\u21bb ${t('nav.refresh')}`),
-    h('button', { className: 'pm-tbtn', onClick: () => setTab('settings'), title: t('nav.settings') }, `\u2699 ${t('nav.settings')}`),
+    h('button', { className: 'pm-tbtn', disabled: state.refreshing, onClick: () => void load(target.current) }, state.refreshing ? t('page.refreshing') : t('nav.refresh')),
+    h('div', { className: 'pm-toolbar-router' },
+      modelLabel ? h('span', { className: 'pm-model-summary' }, modelLabel) : null,
+      tab === 'settings' ? null : h('button', { className: 'pm-tbtn', onClick: () => setTab('settings') }, t('connection.configure')),
+    ),
   )
 
   const tabbar = h(
@@ -1555,21 +1746,42 @@ function MemoryDashboard(props) {
 
   // --- body -----------------------------------------------------------------
   let body
-  if (state.phase === 'loading' && data === null) {
+  const projectLoading = state.phase === 'loading' && (data === null || (selected !== null && selected !== data.root))
+  const projectNotice = projectLoading ? h('div', { className: 'pm-muted', role: 'status' }, t('panel.loading'))
+    : state.phase === 'error' ? h('div', { className: 'pm-banner bad', role: 'alert' }, `${t('panel.error')}: ${state.reason}`) : null
+  if (data !== null && tab === 'settings') {
+    body = h(SettingsPage, {
+      data,
+      projectNotice,
+      t,
+      choice,
+      setChoice,
+      saving,
+      saveReason,
+      onSave: () => void save(),
+      onConnectionSaved: (connection) => {
+        setState((current) => current.data === null ? current : { ...current, data: { ...current.data, connection } })
+        void load(target.current)
+      },
+      scope,
+      setScope,
+      canOverride: data.root !== null && Array.isArray(data.overridable) && data.overridable.length > 0,
+      resetOverride: (key) => void resetOverride(key),
+      overridden: Array.isArray(data.overridden) ? data.overridden : [],
+    })
+  } else if (projectLoading) {
     body = h(
       'div',
       { className: 'pm-page' },
-      h('div', { className: 'pm-muted' }, t('panel.loading')),
-      h('div', { className: 'pm-skel', style: { height: '18px', width: '40%' } }),
+      projectNotice,
       h('div', { className: 'pm-skel', style: { height: '90px' } }),
-      h('div', { className: 'pm-skel', style: { height: '120px' } }),
     )
   } else if (state.phase === 'error') {
     body = h(
       'div',
       { className: 'pm-page' },
-      h('div', { className: 'pm-banner bad' }, `${t('panel.error')}: ${state.reason}`),
-      h('button', { className: 'pm-btn', onClick: () => void load(selected) }, t('panel.retry')),
+      projectNotice,
+      h('button', { className: 'pm-btn', onClick: () => void load(target.current) }, t('panel.retry')),
     )
   } else if (data !== null && data.atoms?.readable === true && data.atoms.live === 0 && tab !== 'settings') {
     // An empty store is not a failure, and it is not the same as an unreadable one: the
@@ -1577,68 +1789,15 @@ function MemoryDashboard(props) {
     body = h('div', { className: 'pm-page' }, h('div', { className: 'pm-card' }, h('div', { className: 'pm-empty' }, t('panel.empty'))))
   } else if (data !== null) {
     if (data.root === null && tab !== 'settings') {
-      // "No project root" is a different statement from "this project has no memory".
-      body = h(
-        'div',
-        { className: 'pm-page' },
-        h(
-          'div',
-          { className: 'pm-card' },
-          h('div', { className: 'pm-banner warn' }, t('panel.noRoot')),
-          h(
-            'div',
-            { className: 'pm-projects' },
-            ...(Array.isArray(data.projects) && data.projects.length > 0
-              ? data.projects.map((row) =>
-                  h(ProjectRow, {
-                    key: row.key ?? row.root,
-                    row,
-                    t,
-                    selected: false,
-                    onPick: () => {
-                      setSelected(row.root)
-                      setScope('project')
-                    },
-                  }),
-                )
-              : [h('div', { className: 'pm-muted' }, t('project.none'))]),
-          ),
-        ),
+      body = h('div', { className: 'pm-page' },
+        h('div', { className: 'pm-banner warn' }, t('panel.noRoot')),
+        projects.length === 0 ? h('p', { className: 'pm-muted' }, t('project.none')) : null,
       )
-    } else if (tab === 'overview') {
-      // Picking a project is a statement about which project you are configuring, so the
-      // editor follows it into project scope rather than staying on a layer the user did
-      // not mean.
-      body = h(OverviewPage, {
-        data,
-        t,
-        now,
-        projects: Array.isArray(data.projects) ? data.projects : [],
-        selectedRoot: data.root,
-        onPick: (root) => {
-          setSelected(root)
-          setScope('project')
-          setSaveReason(null)
-        },
-      })
-    }
+    } else if (tab === 'overview') body = h(OverviewPage, { key: data.root, data, t, now })
     else if (tab === 'explorer') body = h(ExplorerPage, { data, t, onOpen: (row) => setDrawer(row) })
     else if (tab === 'compactions') body = h(CompactionsPage, { data, t })
     else if (tab === 'router') body = h(RouterTracePage, { data, t })
-    else body = h(SettingsPage, {
-      data,
-      t,
-      choice,
-      setChoice,
-      saving,
-      saveReason,
-      onSave: () => void save(),
-      scope,
-      setScope,
-      canOverride: data.root !== null && Array.isArray(data.overridable) && data.overridable.length > 0,
-      resetOverride: (key) => void resetOverride(key),
-      overridden: Array.isArray(data.overridden) ? data.overridden : [],
-    })
+
   }
 
   return h(

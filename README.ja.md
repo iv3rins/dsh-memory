@@ -24,35 +24,45 @@ MIT · Node 20+ · 実行時依存なし
 |---|---|---|---|
 | **A — ドキュメント** | あなたの Markdown | あなた（git 上で） | すべて |
 | **B — 状態** | タスク、進捗、ブロッカー、決定 | `state_update` / `state_handoff` | 再起動、圧縮 |
-| **C — 原子** | 短く永続的な命題 | 圧縮オブザーバー、`memory_remember` | 再起動、圧縮 |
+| **C — 記憶クラスタ** | 話題ごとにまとめた永続的な記憶原子 | 圧縮オブザーバー、`memory_remember` | 再起動、圧縮 |
 
 面白いのは **C** です：
 
 ```
 長いセッション ──▶ 圧縮 ──▶ 不可逆な要約（モデルが次に見るもの）
                     │
-                    └──▶ 短い原子 ──▶ .dsh-memory/memory/atoms.jsonl
+                    └──▶ 記憶クラスタ ──▶ .dsh-memory/memory/atoms.jsonl
                                               │
-次のステップ ──▶ 「このリクエスト」のための疎な選択 ──┘
-                  └──▶ token 上限内のわずかな原子
+次のステップ ──▶ タスクに関連するクラスタを検索 ─────┘
+                  └──▶ トークン上限内の候補原子
 ```
 
 四つの性質が、毎ステップ動かせるほど安くしています：
 
-1. **疎であって、投げ込みではない。** 数百のうち少数だけを、*この*リクエストに合わせて順位付け。厳格な token 上限により、コストは設定で決まり、プロジェクト規模では決まりません。
+1. **先にクラスタを探す。** 語句、タグ、ファイルパスで関連するクラスタを探し、そこからトークン上限内の原子を選びます。
 2. **記録であって、収集ではない。** 状態と原子はツール呼び出しが書きます。`state_update` を一度も呼ばないエージェントには状態記憶がありません——静かに間違うのではなく、目に見える欠落です。唯一の意図的な例外は圧縮オブザーバーで、圧縮要約を読むことこそシステム C の存在理由です。
-3. **ルールは関連性に優先する。** `constraint` 原子は**常駐（standing）**です：採点の前に選ばれ、今回の文言が一致しなくても保持されます。「たまたま言及したときだけ効くルール」はルールではありません。
-4. **選択は決して書き込まない。** 任意の router サブエージェントは渡された id からしか選べず、捏造した id は捨てられます。変更は決定的なコードだけが行います。
+3. **決定的な想起では常駐ルールに予算を割り当てる。** 語句が一致しなくても常駐ルールを選べます。ルーティングモデルを設定している場合、候補の本文を読み込むかどうかは実行モデルが判断します。
+4. **選択は読み取り専用です。** ルーティングモデルは渡された ID から選びます。決定的なコードが未知の ID を除外し、記憶を書き込みます。
 
-### Router の 3 段階
+### ルーティングモデルの 3 段階
 
 | `routerTier` | 動作 | コスト |
 |---|---|---|
 | `off` | 決定的な採点のみ | 無料 |
 | `smart`（既定） | 決定的な採点が関連項目を見つけられない、または一致が弱いときだけ昇格 | provider と model の両方が設定されるまで無料 |
-| `always` | 毎ステップ router に問い合わせる | 1 ステップ 1 呼び出し |
+| `always` | 条件を満たす想起ごとにルーティングモデルを呼び出す | 1 回の検索につき最大 1 回 |
 
-`smart` は箱から出して無料です：`routerProvider` と `routerModel` の両方が必要です。`routerStrategy`（`task` / `compliance` / `orient`）は router に渡す指示を変えるので、原子も段階も同じ二つの設定が違う結果を返せます。
+DSH のルーティングモデルには `routerProvider` と `routerModel` の両方が必要です。`routerStrategy`（`task` / `compliance` / `orient`）でモデルに渡す指示を変更できます。
+
+#### 記憶の候補を確認し、検索をやり直す
+
+ルーティングモデルを設定すると、`agent/pre-step` フックは候補の ID、種類、クラスタ、関連ファイルを実行モデルに渡せます。実行モデルは現在のプロジェクトを読んだうえで、読み込む記憶を決めます。`memory_intent` で明示的に検索する場合も同じ手順です。
+
+1. `memory_intent({ task_summary: "設定の保存方法を確認", affected_modules: ["lib/panel.js"] })` で検索します。
+2. `proposal_id` と `accept_memory_ids` を `memory_intent` に渡すと、承認した本文だけを取得できます。空のリストを渡すと候補全体を拒否します。
+3. `proposal_id` と、現在のプロジェクトで確認した根拠を記載した `feedback` を渡すと再検索できます。新しい検索ではその根拠を使い、拒否済みの ID を除外します。必要に応じて確認を繰り返します。
+
+ルーティングモデルは想起すべき記憶がないと回答できます。候補が見つからない場合や呼び出しに失敗した場合、想起の本文は追加されません。モデルが未設定または無効の場合は決定的に想起します。
 
 ### 「常駐」は「重み」ではない
 
@@ -85,12 +95,12 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 | `memory_bootstrap` | 新しいセッションに必要なすべてを、予算内の 1 呼び出しで。 |
 | `memory_search` | どの文書がこれを論じているか？順位付き、status/kind/path フィルタ付き。 |
 | `memory_read` | 文書、またはその `##` セクション一つを、データとして読む。 |
-| `memory_recall` | どの保存済み原子がこの問いに合うか？順位・予算・ルート付き。 |
-| `memory_intent` | 同上を構造化 Task Intent（タスク、モジュール、操作、カテゴリ）で。 |
+| `memory_recall` | プロジェクトの記憶クラスタから関連する原子を決定的に検索する。 |
+| `memory_intent` | タスクで記憶を検索し、候補を承認、拒否、再検索する。 |
 | `memory_remember` | 永続的な事実、制約、決定を保存する。 |
 | `memory_forget` | id で原子を退役させる。墓標は粘着性。 |
 | `memory_lifecycle` | 原子の階層（HOT / WARM / COLD）を確認・調整する。 |
-| `memory_metrics` | router 呼び出し、遅延、キャッシュ命中、配信と確認使用、token コスト。 |
+| `memory_metrics` | ルーティングモデルの呼び出し、遅延、キャッシュヒット、配信と使用、トークンコスト。 |
 | `state_get` / `state_update` | 状態を読む／変更を記録する。CAS で、衝突は報告される。 |
 | `state_handoff` | セッション終わりのメモ。次のセッションが向きを得た状態で始まる。 |
 | `project_init` / `project_inspect` | `.dsh-memory/` を作る／読み取り専用の診断。 |
@@ -99,7 +109,7 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 
 **コマンド：** `/memory-status`、`/memory-context`、`/memory-init`、`/memory-handoff`、`/memory-recall`、`/memory-route`、`/memory-forget`、`/memory-sync`、`/architecture-check`。`/memory-route` はドライラン：現在の段階がどのルートを取るか、なぜかを、モデル呼び出しを費やさずに示します。
 
-**サイドバーパネル。** サイドバーの 1 項目が、人が実際に知りたい問いに答えるダッシュボードを開きます——*圧縮は記憶を残したのか？* 直近の圧縮を一文で、新しい順の圧縮タイムライン（沈黙した圧縮は隠さず暗く表示）、生存・忘却被数の原子数、常駐ハードルール数、種別と重みの内訳を表示します。router の制御は既定で折りたたみ。記憶を変更するボタンは**一つもありません**：原子は圧縮と来歴を持つツールが書き、削除は `memory_forget` のみです。二つのルート（`/project-memory/status`、`/project-memory/config`）はループバック限定です。
+**サイドバーパネル。** 最近の圧縮結果、有効な記憶と忘却済みの記憶の件数、常駐ルール、記憶の内訳を表示します。ルーティングモデルの設定は初期状態で折りたたまれています。記憶の忘却には `memory_forget` を使います。パネルのエンドポイントへのアクセスはループバックアドレスに限定されます。
 
 **コンテキスト注入。** 最初のステップで予算内のベースライン（同一性、git の事実、タスク、不変条件、次の一手、ブロッカー、決定、文書マップ）を注入し、同一性が変わったときだけ再送します。各ステップは recall ブロックも受け取れ、セッションの可視面に対して重複排除されます。どちらもプラグイン所有のメッセージとして nonce フェンス内で届きます：プロジェクトのテキストはデータであり、決して指示ではありません。
 
@@ -114,7 +124,7 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 | `l0Budget` / `l1Budget` / `l2Budget` | `300` / `1200` / `2000` | Token：最小ベースライン、完全ベースライン、1 回の読み取り。 |
 | `recallBudget` / `recallLimit` | `400` / `8` | 1 回の recall の上限と件数。 |
 | `routerTier` / `routerStrategy` | `smart` / `task` | 上記の段階表を参照。 |
-| `routerProvider` / `routerModel` | `''` / `''` | router のモデル。空なら呼び出しなし。 |
+| `routerProvider` / `routerModel` | `''` / `''` | DSH のルーティングモデル。 |
 | `routerTimeoutMs` / `routerDigestBudget` | `20000` / `900` | 呼び出しの制限時間／渡すダイジェストの token 上限。 |
 | `extractOnCompaction` / `extractUserRules` | `true` | 要約と明言されたルールから原子を抽出。 |
 | `semanticRouting`、`lifecycleEnabled`、`taskIntentEnabled` | `false` | 任意の追加層。`false` に戻せば以前の挙動に復帰。 |
@@ -132,13 +142,13 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
   state/current.json  状態ドキュメント（リビジョン付き）
   state/journal.jsonl 受理された書き込みの追記ログ
   state/compactions.jsonl 観測した圧縮ごとに 1 行（沈黙したものも含む）
-  memory/atoms.jsonl  永続原子、1 行 1 JSON レコード
+  memory/atoms.jsonl  有効なクラスタまたは墓標ごとに 1 行の JSON
   memory/metrics.json 上限付きイベントカウンタ
   index.json          派生キャッシュ —— 削除して安全
   settings/<key>.json プロジェクト単位の上書き
 ```
 
-原子の id は内容アドレス（種別と正規化テキストのハッシュ）なので、同じ文を二度見ても 1 レコードが強化されるだけです。`memory_forget` は行を消さず墓標を書くので、後続の抽出が復活させることはできません。壊れたファイルは改名して隔離し、報告します。黙って置き換えることはありません。
+従来の原子レコードも読み込めます。次に内容が更新されるとクラスタ形式に移行し、原子 ID、来歴、常駐ルール、墓標を引き継ぎます。同じ内容が繰り返し記録されると同じ原子が強化されます。`memory_forget` は墓標を書き込んで再抽出を防ぎます。
 
 ## 測ったもの、測っていないもの
 
@@ -146,11 +156,8 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 
 **測っていない**：
 
-- **Router の精度——ゼロ測定。** router サブエージェントは実際のモデルに対して一度も走っていません。テストはスタブでタイムアウト、中断、不正な応答、未知の id を覆いますが、実際の spawn が実際の選択を生むところは観測されていません。`smart` の**発火率も同様に未測定**です：昇格の条件は `decideRoute` にありますが、それがどれくらいの頻度で発火するかに数字はありません。
-- **全走査のコスト。** `gateAtoms` は recall のたびに生存原子すべてを採点します（`core/gate.js`）。本機実測——401 レコードのストア——で `readAtoms` 1 回は約 5.6 ms、`gateAtoms` 1 回は約 9.4 ms。均一な合成原子では 100 / 200 / 400 / 800 個でそれぞれ約 0.7 / 1.0 / 1.6 / 3.3 ms とほぼ線形に伸びます。**転置インデックスはありません。** 常駐原子の選択は独立した**パス**ですが同じ走査を再利用するため、独立した候補経路にはなっていません。
-- **`atoms.jsonl` の解析コスト。** recall のたびにファイル全体を読み直して再解析します（`lib/recall.js`）。プロセス内スナップショットキャッシュはありません。キャッシュにはプロセス横断の無効化が必要です（別セッション、別プロセス、あるいは `memory_forget` がファイルを書き換えうるため）。だからこれはパッチではなく設計課題です。
-
-検索は語彙的で、意味的ではありません。router はタイムアウト時に決定的選択へ降格するので、最悪の場合は改善の取りこぼしであり、ステップの破壊ではありません。
+- **ルーティングモデルの精度と呼び出し頻度。** テストはスタブを使ってタイムアウト、中断、不正な応答、未知の ID を確認しています。実際の DSH ルーティングモデルの精度と `smart` の呼び出し頻度は未測定です。
+- **クラスタ検索の性能。** 想起時は `atoms.jsonl` を解析し、関連クラスタの原子を順位付けします。従来の計測値は移行前の全件走査を対象としています。
 
 ## やらないこと
 
@@ -175,10 +182,10 @@ npm run test:host    # 実際の harness に対する 28 項目の連鎖検査
 
 ```
 core/   純粋な Node、DSH を import しない —— テスト可能な中核
-        memory.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
+        memory.js  clusters.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
         extract.js  config.js  index.js  search.js  store.js  paths.js  ...
 lib/    cordis 層：index.js  tools.js  commands.js  panel.js  recall.js
-        router.js  semantic.js  delegate.js  compaction-memory.js
+        recall-review.js  router.js  semantic.js  delegate.js  compaction-memory.js
 client.js  サイドバーパネル（Client 半分）
 tests/     unit/（node --test）と *.mjs のホスト検査
 docs/      設計ノートとドキュメント提案

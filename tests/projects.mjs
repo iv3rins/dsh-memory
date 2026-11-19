@@ -26,6 +26,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { normalizeConfig } from '../core/config.js'
+import { recordAtoms } from '../core/memory.js'
+import { buildCommands } from '../lib/commands.js'
 
 const projects = await import('../core/projects.js')
 const panel = await import('../lib/panel.js')
@@ -262,6 +265,53 @@ check('buildPanelStatus reports an unreadable override file instead of swallowin
   assert.equal(status.overrideReason, 'settings file is not valid JSON')
 })
 
+{
+  const settings = normalizeConfig({ projectRoot: beta, routerTier: 'always' })
+  const commands = new Map(buildCommands({ settings }).map((command) => [command.name, command.handler]))
+  assert.equal((await commands.get('memory-init')({})).kind, 'success')
+  assert.equal(projects.writeOverride({ root: beta, key: 'routerTier', value: 'off' }).ok, true)
+  assert.equal(projects.writeOverride({ root: beta, key: 'recallBudget', value: 120 }).ok, true)
+  const stored = await recordAtoms({ root: beta, atoms: [
+    { kind: 'fact', text: 'The Zephyr checkpoint is written atomically.' },
+    { kind: 'fact', text: 'Analytics exports use decimal notation.' },
+    { kind: 'constraint', text: 'Keep lock files outside the deployment bundle.', standing: true },
+  ] })
+  assert.equal(stored.ok, true)
+
+  const request = { rawInput: 'Zephyr checkpoint' }
+  const preview = await commands.get('memory-recall')(request)
+  assert.equal(preview.kind, 'success')
+  assert.match(preview.text, /1 matching cluster\(s\)/)
+  assert.match(preview.text, /3 live atom\(s\)/)
+  assert.match(preview.text, /\/120 tokens/)
+  assert.match(preview.text, /The Zephyr checkpoint/)
+  assert.match(preview.text, /Keep lock files outside/)
+  assert.doesNotMatch(preview.text, /Analytics exports|\[object Object\]/)
+
+  const route = await commands.get('memory-route')(request)
+  assert.equal(route.kind, 'success')
+  assert.match(route.text, /tier: off/)
+  assert.match(route.text, /1 matching cluster\(s\)/)
+  assert.match(route.text, /routing model: inactive/)
+
+  const independent = normalizeConfig({
+    projectRoot: alpha,
+    routerTier: 'always',
+    routerBaseUrl: 'http://127.0.0.1:8080/v1',
+    localRouterModel: 'fixture',
+  })
+  const independentCommands = new Map(buildCommands({ settings: independent }).map(({ name, handler }) => [name, handler]))
+  assert.equal((await independentCommands.get('memory-init')({})).kind, 'success')
+  assert.equal((await recordAtoms({ root: alpha, atoms: [
+    { kind: 'fact', text: 'Analytics exports use decimal notation.' },
+  ] })).ok, true)
+  const unmatched = await independentCommands.get('memory-route')(request)
+  assert.equal(unmatched.kind, 'success')
+  assert.match(unmatched.text, /route for this request: none/)
+  assert.match(unmatched.text, /0 matching cluster\(s\)/)
+  passed += 1
+}
+
 // ------------------------------------------------------------------ report
 
 // A leftover override from this test on this machine's temporary directory would not
@@ -273,5 +323,5 @@ for (const dir of [alpha, beta]) {
 rmSync(root, { recursive: true, force: true })
 
 console.log(
-  `PROJECTS OK: ${passed} checks — key normalisation, per-project merge without mutation, single-project override scope, file removal on the last key, refusal of a non-overridable key, corrupt-file reporting, de-duplicated project listing, and the panel's refusal to honour an unknown or escaping project path`,
+  `PROJECTS OK: ${passed} checks, including project settings, panel path resolution, and cluster-based command previews`,
 )

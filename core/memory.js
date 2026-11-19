@@ -29,9 +29,11 @@ import { readText, writeTextAtomic, withLock } from './store.js'
 import { tokenize } from './search.js'
 import { stableStringify } from './state.js'
 import { normalizeCategories, resolveCategories } from './category.js'
+import { buildMemoryClusters } from './clusters.js'
 
 /** Schema version for one atom record. */
 export const MEMORY_SCHEMA = 1
+const CLUSTER_SCHEMA = 1
 
 /** Files this module owns inside `.dsh-memory`. */
 export const MEMORY_STORE_DIR = `${MEMORY_DIR}/memory`
@@ -285,25 +287,28 @@ export function mergeAtom(existing, incoming) {
 }
 
 /**
- * Read every atom record for a project.
+ * Read every atom record and its topic cluster for a project.
  *
- * Last record wins per id, so a partially rewritten file cannot resurrect an
- * older version of an atom. A malformed line is counted and skipped: one bad
- * byte must not cost a session its whole memory.
+ * Legacy atom lines are grouped on read and converted on the next successful
+ * mutation. Last record wins per atom ID. A malformed line is counted and skipped.
  *
  * @param {string} root - project root.
- * @returns {{ ok: true, atoms: object[], live: object[], lines: number, invalid: number, existed: boolean }
+ * @param {{ includeClusters?: boolean }} [options] - atom-only consumers may skip grouping.
+ * @returns {{ ok: true, atoms: object[], live: object[], clusters: object[], clusterIds: Map<string, string>, lines: number, invalid: number, existed: boolean }
  *   | { ok: false, reason: string }} the store contents.
  */
-export function readAtoms(root) {
+export function readAtoms(root, options = {}) {
   const absolute = path.join(root, ATOMS_FILE)
   const text = readText(absolute)
   if (!text.ok) {
-    if (text.reason === 'absent') return { ok: true, atoms: [], live: [], lines: 0, invalid: 0, existed: false }
+    if (text.reason === 'absent') {
+      return { ok: true, atoms: [], live: [], clusters: [], clusterIds: new Map(), lines: 0, invalid: 0, existed: false }
+    }
     return { ok: false, reason: text.reason }
   }
   /** @type {Map<string, object>} */
   const records = new Map()
+  const memberships = new Map()
   let lines = 0
   let invalid = 0
   for (const line of text.text.split('\n')) {
@@ -316,29 +321,50 @@ export function readAtoms(root) {
       invalid += 1
       continue
     }
-    const atom = normalizeAtom(parsed)
-    if (atom !== null && atom.category_id.length === 0) atom.category_id = resolveCategories(atom)
-    if (atom === null) {
+    const isCluster = parsed?.type === 'cluster'
+    if (isCluster && parsed.schema !== CLUSTER_SCHEMA) return { ok: false, reason: 'unsupported memory cluster schema' }
+    if (isCluster && (!/^cluster-[a-f0-9]{16}$/.test(parsed.id) || !Array.isArray(parsed.atoms) || parsed.atoms.length === 0)) {
       invalid += 1
       continue
     }
-    records.set(atom.id, atom)
+    for (const raw of isCluster ? parsed.atoms : [parsed]) {
+      const atom = normalizeAtom(raw)
+      if (atom === null) {
+        invalid += 1
+        continue
+      }
+      if (atom.category_id.length === 0) atom.category_id = resolveCategories(atom)
+      records.set(atom.id, atom)
+      if (isCluster && !atom.forgotten) memberships.set(atom.id, parsed.id)
+      else memberships.delete(atom.id)
+    }
   }
   const atoms = [...records.values()]
+  const live = atoms.filter((atom) => !atom.forgotten)
+  const clusters = options.includeClusters === false ? [] : buildMemoryClusters(live, memberships)
+  const clusterIds = new Map()
+  for (const cluster of clusters) {
+    for (const atom of cluster.atoms) clusterIds.set(atom.id, cluster.id)
+  }
   return {
     ok: true,
     atoms,
-    live: atoms.filter((atom) => atom.forgotten !== true),
+    live,
+    clusters,
+    clusterIds,
     lines,
     invalid,
     existed: true,
   }
 }
 
-/** Serialize atoms as the one-record-per-line store format. */
-function serializeAtoms(atoms) {
-  if (atoms.length === 0) return ''
-  return `${atoms.map((atom) => JSON.stringify(atom)).join('\n')}\n`
+/** Each live cluster gets one line. Tombstones remain individually addressable. */
+function serializeAtoms(atoms, memberships) {
+  const live = atoms.filter((atom) => !atom.forgotten)
+  const clusters = buildMemoryClusters(live, memberships)
+  const rows = clusters.map((cluster) => ({ type: 'cluster', schema: CLUSTER_SCHEMA, id: cluster.id, atoms: cluster.atoms }))
+  rows.push(...atoms.filter((atom) => atom.forgotten))
+  return rows.length === 0 ? '' : `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`
 }
 
 /**
@@ -447,7 +473,7 @@ export async function recordAtoms(input) {
       }
 
       const pruned = input.options?.prune === false ? { atoms: [...byId.values()], dropped: 0 } : pruneAtoms([...byId.values()])
-      const written = writeTextAtomic(path.join(input.root, ATOMS_FILE), serializeAtoms(pruned.atoms))
+      const written = writeTextAtomic(path.join(input.root, ATOMS_FILE), serializeAtoms(pruned.atoms, current.clusterIds))
       if (!written.ok) return { ok: /** @type {false} */ (false), reason: `cannot write memory atoms: ${written.error?.message ?? written.error}` }
       return {
         ok: /** @type {true} */ (true),
@@ -487,13 +513,10 @@ export async function forgetAtoms(input) {
       const current = readAtoms(input.root)
       if (!current.ok) return { ok: /** @type {false} */ (false), reason: `cannot read memory atoms: ${current.reason}` }
       let forgotten = 0
-      let missing = 0
-      for (const id of wanted) {
-        const atom = current.atoms.find((candidate) => candidate.id === id)
-        if (atom === undefined) {
-          missing += 1
-          continue
-        }
+      let missing = wanted.size
+      for (const atom of current.atoms) {
+        if (!wanted.has(atom.id)) continue
+        missing -= 1
         if (atom.forgotten === true) continue
         atom.forgotten = true
         atom.updatedAt = now
@@ -502,7 +525,7 @@ export async function forgetAtoms(input) {
       if (forgotten === 0) {
         return { ok: /** @type {true} */ (true), forgotten: 0, missing, records: current.atoms.length }
       }
-      const written = writeTextAtomic(path.join(input.root, ATOMS_FILE), serializeAtoms(current.atoms))
+      const written = writeTextAtomic(path.join(input.root, ATOMS_FILE), serializeAtoms(current.atoms, current.clusterIds))
       if (!written.ok) return { ok: /** @type {false} */ (false), reason: `cannot write memory atoms: ${written.error?.message ?? written.error}` }
       return { ok: /** @type {true} */ (true), forgotten, missing, records: current.atoms.length }
     },

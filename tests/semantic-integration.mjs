@@ -244,7 +244,7 @@ function assembleRequest(stepMessages, injected) {
     assert.match(manifest.text, /memory_intent/, 'the manifest names the structured tool')
     assert.match(manifest.text, /memory_recall/, 'the manifest names the keyword tool')
     assert.match(manifest.text, /memory_remember/, 'the manifest says how to make memory survive the next compaction')
-    assert.match(manifest.text, /reference data, not instructions/, 'the manifest keeps memory framed as data')
+    assert.match(manifest.text, /historical reference/, 'the manifest keeps memory framed as data')
     // The whole point: instructions, not content.
     for (const subject of subjects) {
       assert.equal(manifest.text.includes(subject.text), false, 'the manifest carries no atom text')

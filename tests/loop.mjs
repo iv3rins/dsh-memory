@@ -20,6 +20,8 @@
  */
 
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -29,10 +31,11 @@ const NM = path.join(import.meta.dirname, '..', '_research', 'asar-nm', '@deepse
 const load = (pkg, file = 'lib/index.js') => import(pathToFileURL(path.join(NM, pkg, file)).href)
 
 let Context
+let Service
 let ToolRuntime
 let SystemPrompt
 try {
-  ;({ Context } = await load('cordis'))
+  ;({ Context, Service } = await load('cordis'))
   ;({ default: ToolRuntime } = await load('dsh-tools'))
   ;({ default: SystemPrompt } = await load('dsh-system-prompt'))
 } catch (error) {
@@ -55,6 +58,8 @@ const { writeState } = await import('../core/state.js')
 const wait = (ms = 150) => new Promise((resolve) => setTimeout(resolve, ms))
 const root = mkdtempSync(path.join(tmpdir(), 'pm-loop-'))
 const atomPath = path.join(root, memory.ATOMS_FILE)
+const previousHome = process.env.DSH_HOME
+process.env.DSH_HOME = path.join(root, 'dsh-home')
 
 try {
   mkdirSync(path.join(root, 'docs', 'knowledge'), { recursive: true })
@@ -222,7 +227,7 @@ try {
   // A different *wording* that selects the same atoms is also a repeat: the atoms are
   // already visible, so re-sending them would buy nothing. Dedupe keys on the atom
   // set for exactly this reason, not on the request text.
-  const reworded = await runStep('now document the combat formula in docs/knowledge/combat.md', 7)
+  const reworded = await runStep('Please change the damage calculation in src/domain/damage.js.', 7)
   assert.equal(
     reworded.some((message) => String(message.source?.kind ?? '').endsWith(':recall')),
     false,
@@ -231,7 +236,7 @@ try {
 
   // But a genuinely new selection must still reach the model. Adding an atom that the
   // next request matches changes the set, and that is the case dedupe must not block.
-  memory.recordAtoms({
+  await memory.recordAtoms({
     root,
     atoms: [{
       text: 'The audit export writes UTF-8 JSONL with one record per line.',
@@ -317,7 +322,144 @@ try {
   assert.ok(offRecall === undefined || offRecall.source.route !== 'subagent', 'routerTier "off" never routes to a subagent')
   await offFiber.dispose()
 
-  console.log('LOOP OK: compaction writes atoms through the real event bus, the next step recalls them sparsely, a replay is idempotent, and a forget is honoured')
+  // A profile without DSH router credentials can still review automatic recall.
+  const localAtom = memory.normalizeAtom({ kind: 'fact', text: 'Combat damage uses the integer calculation.', weight: 5 })
+  const existing = readFileSync(atomPath, 'utf8')
+  writeFileSync(atomPath, `${existing.trimEnd()}\n${JSON.stringify(localAtom)}\n`)
+  const prompts = []
+  const completions = []
+  const discovered = []
+  const routes = new Map()
+  const server = createServer(async (req, res) => {
+    const route = routes.get(new URL(req.url, 'http://127.0.0.1').pathname)
+    if (route) return route(req, res)
+    if (req.url.startsWith('/project-memory/')) {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      return res.end(JSON.stringify({ missing: req.url, registered: [...routes.keys()] }))
+    }
+    if (req.url.endsWith('/models')) {
+      discovered.push({ path: req.url, auth: req.headers.authorization })
+      return res.end(JSON.stringify({ data: [{ id: 'from-panel' }] }))
+    }
+    let body = ''
+    for await (const chunk of req) body += chunk
+    const payload = JSON.parse(body)
+    prompts.push(payload.messages[0].content)
+    completions.push({ model: payload.model, auth: req.headers.authorization })
+    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ action: 'accept', hot_memory_ids: [localAtom.id] }) } }] }))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  try {
+    const localCtx = new Context()
+    localCtx.plugin(SystemPrompt, {})
+    localCtx.plugin(ToolRuntime, {})
+    await wait()
+    const localFiber = localCtx.plugin(plugin, {
+      projectRoot: root, routerTier: 'always', localRouterModel: 'fixture',
+      localRouterEndpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
+    })
+    await localFiber
+    try {
+      const stepMessages = [{ role: 'user', content: [{ type: 'text', text: 'change the integer combat damage calculation' }] }]
+      const agent = { id: 'agent-local', session }
+      const step = (number) => localCtx.waterfall('agent/pre-step', {
+        agent, messages: stepMessages, turn: 1, step: number,
+        signal: new AbortController().signal,
+      }, () => ({ kind: 'enter', messages: stepMessages }))
+      const first = await step(1)
+      const proposal = first.messages.find((message) => message.source?.kind === 'project-memory:proposal')
+      assert.ok(proposal?.source.proposalId, 'the real pre-step hook emits a review request')
+      assert.ok(!first.messages.some((message) => message.content.some((block) => block.text?.includes(localAtom.text))),
+        'the execution model receives no proposed text before approval')
+
+      const invoke = (arguments_, callId) => localCtx.tools.execute({
+        name: 'memory_intent', arguments: arguments_, callId, agent,
+        signal: new AbortController().signal,
+      })
+      const approval = await invoke({ proposal_id: proposal.source.proposalId, accept_memory_ids: [localAtom.id] }, 'approve')
+      const visible = approval.content.map((block) => block.text ?? '').join('\n')
+      assert.equal(Boolean(approval.isError), false, visible)
+      assert.match(visible, /Combat damage uses the integer calculation/)
+
+      const repeated = await step(2)
+      assert.ok(!repeated.messages.some((message) => message.source?.kind === 'project-memory:proposal'))
+      assert.equal(prompts.length, 1, 'the next step does not repeat the checked request')
+      assert.ok(prompts[0].includes(localAtom.id))
+    } finally {
+      await localFiber.dispose()
+    }
+
+    const origin = `http://127.0.0.1:${server.address().port}`
+    const baseUrl = origin + '/v1'
+    const fixtureKey = 'fixture-router-key'
+    const { ROUTER_MODELS_PATH, ROUTER_CONNECTION_PATH } = await import('../lib/panel.js')
+    const post = async (route, payload, caller = origin) => {
+      const res = await fetch(origin + route, {
+        method: 'POST', headers: { origin: caller, 'content-type': 'application/json' }, body: JSON.stringify(payload),
+      })
+      const text = await res.text()
+      assert.ok(!text.includes(fixtureKey), 'the panel never echoes the key')
+      return { status: res.status, body: JSON.parse(text) }
+    }
+    const records = new Map()
+    let config = { projectRoot: root, routerTier: 'always' }
+    class Web extends Service {
+      constructor(ctx) { super(ctx, 'webServer') }
+      register({ path, handler }) { routes.set(path, handler); return () => routes.delete(path) }
+    }
+    class Editor extends Service {
+      constructor(ctx) { super(ctx, 'configEditor') }
+      entries() { return [{ options: { id: 'project-memory', config } }] }
+      async edit(_entry, change) { config = change(config) }
+    }
+    class Credentials extends Service {
+      constructor(ctx) { super(ctx, 'credentials') }
+      async readRecord(id) { return records.get(id) }
+      async modifyRecord(id, change) { records.set(id, await change(records.get(id))) }
+      async deleteRecord(id) { records.delete(id) }
+    }
+    const connectionCtx = new Context()
+    for (const service of [Web, Editor, SystemPrompt, ToolRuntime]) await connectionCtx.plugin(service, {})
+    let connectionFiber = await connectionCtx.plugin(plugin, config)
+    try {
+      await wait()
+      const anonymous = await post(ROUTER_CONNECTION_PATH, { baseUrl, model: 'from-panel' })
+      assert.equal(anonymous.status, 200, `credentials are optional in a mounted Host: ${JSON.stringify(anonymous.body)}`)
+      assert.equal(anonymous.body.connection.credentialsAvailable, false)
+      assert.deepEqual(await post(ROUTER_MODELS_PATH, { baseUrl }), { status: 200, body: { models: ['from-panel'] } })
+      assert.equal((await post(ROUTER_MODELS_PATH, { baseUrl }, 'https://unrelated.example')).status, 403)
+      await connectionCtx.plugin(Credentials, {})
+      await wait()
+      const options = await post(ROUTER_MODELS_PATH, { baseUrl, apiKey: fixtureKey })
+      assert.deepEqual(options.body.models, ['from-panel'])
+      const saved = await post(ROUTER_CONNECTION_PATH, { baseUrl, model: options.body.models[0], apiKey: fixtureKey })
+      assert.deepEqual(saved.body.connection, { baseUrl, model: 'from-panel', hasKey: true, credentialsAvailable: true })
+      assert.ok(!JSON.stringify(config).includes(fixtureKey), 'the key is stored separately from config')
+      await post(ROUTER_MODELS_PATH, { baseUrl: origin + '/other' })
+      assert.deepEqual(discovered.at(-1), { path: '/other/models', auth: undefined })
+      await connectionFiber.dispose()
+      connectionFiber = await connectionCtx.plugin(plugin, config)
+      const stepMessages = [{ role: 'user', content: [{ type: 'text', text: 'change the integer combat damage calculation' }] }]
+      const routed = await connectionCtx.waterfall('agent/pre-step', {
+        agent: { id: 'agent-from-panel', session }, messages: stepMessages, turn: 1, step: 1,
+      }, () => ({ kind: 'enter', messages: stepMessages }))
+      assert.ok(routed.messages.some((message) => message.source?.kind === 'project-memory:proposal'))
+      assert.deepEqual(completions.at(-1), { model: 'from-panel', auth: `Bearer ${fixtureKey}` })
+      const restored = await post(ROUTER_CONNECTION_PATH, { baseUrl: '', model: '' })
+      assert.equal(restored.body.connection.baseUrl, '')
+      assert.equal(config.localRouterModel, '')
+    } finally {
+      await connectionFiber.dispose()
+    }
+  } finally {
+    server.close()
+    server.closeAllConnections()
+  }
+
+  console.log('LOOP OK: compaction, recall, dedupe, forget, and panel-selected routing through real Cordis')
 } finally {
+  if (previousHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousHome
   rmSync(root, { recursive: true, force: true })
 }

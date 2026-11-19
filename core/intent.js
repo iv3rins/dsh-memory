@@ -93,7 +93,7 @@ export function normalizeTaskIntent(raw, options = {}) {
   /** @type {any} */
   const record = raw
   const taskSummary = oneLine(record.task_summary ?? record.taskSummary, MAX_TASK_SUMMARY_CHARS)
-  if (taskSummary === '') return { ok: false, reason: 'task_summary is required: it is the only field the router cannot guess' }
+  if (taskSummary === '') return { ok: false, reason: 'task_summary is required: it is provide the current task' }
 
   const operationRaw = oneLine(record.operation, 20).toLowerCase()
   const operation = TASK_OPERATIONS.includes(operationRaw) ? operationRaw : 'other'

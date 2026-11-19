@@ -24,35 +24,45 @@ Tres almacenes, porque lo que *escribiste*, lo que *estás haciendo* y lo que *d
 |---|---|---|---|
 | **A — documentos** | tu Markdown | tú, en git | todo |
 | **B — estado** | tarea, progreso, bloqueos, decisiones | `state_update` / `state_handoff` | reinicios, compactación |
-| **C — átomos** | afirmaciones duraderas y breves | el observador de compactación, `memory_remember` | reinicios, compactación |
+| **C — grupos de memoria** | átomos duraderos agrupados por tema | el observador de compactación, `memory_remember` | reinicios, compactación |
 
 El interesante es **C**:
 
 ```
 sesión larga ──▶ compactación ──▶ resumen con pérdida (lo que el modelo ve después)
                       │
-                      └──▶ átomos breves ──▶ .dsh-memory/memory/atoms.jsonl
+                      └──▶ grupos de memoria ──▶ .dsh-memory/memory/atoms.jsonl
                                                     │
-siguiente paso ──▶ selección dispersa para ESTA petición ──┘
-                   └──▶ unos pocos átomos, dentro de un techo de tokens
+siguiente paso ──▶ grupos relacionados con la tarea ───────┘
+                   └──▶ átomos candidatos dentro del presupuesto
 ```
 
 Cuatro propiedades lo abaratan lo suficiente para ejecutarlo en cada paso:
 
-1. **Disperso, no volcado.** Un puñado de átomos entre cientos, ordenados para *esta* petición. Un techo duro de tokens hace que el coste lo fije la configuración y no el tamaño del proyecto.
+1. **Primero los grupos.** La recuperación busca temas relacionados por vocabulario, etiquetas y rutas de archivo, y después selecciona átomos dentro del presupuesto de tokens.
 2. **Registrado, no recolectado.** El estado y los átomos los escriben llamadas a herramientas. Un agente que nunca llama a `state_update` no tiene memoria de estado: un fallo visible, no un error silencioso. La única excepción deliberada es el observador de compactación, que lee resúmenes de compactación: exactamente lo que el sistema C existe para rescatar.
-3. **Las reglas pesan más que la relevancia.** Un átomo `constraint` es **permanente** (*standing*): se selecciona antes de cualquier puntuación y se conserva aunque la redacción de la petición no coincida. Una regla que solo se aplica cuando casualmente la mencionas no es una regla.
-4. **La selección nunca escribe.** El subagente router opcional solo puede responder con ids que se le ofrecieron; un id inventado se descarta. La mutación queda en código determinista.
+3. **La recuperación determinista reserva presupuesto para reglas permanentes.** Estas reglas pueden recuperarse aunque no coincidan las palabras. Con un modelo de enrutamiento configurado, el modelo de ejecución decide qué átomos propuestos puede recibir.
+4. **La selección es de solo lectura.** El modelo de enrutamiento solo puede elegir los ID que recibe. El código determinista descarta los ID desconocidos y realiza las escrituras.
 
-### Niveles del router
+### Niveles del modelo de enrutamiento
 
 | `routerTier` | comportamiento | coste |
 |---|---|---|
 | `off` | solo puntuación determinista | gratis |
 | `smart` (por defecto) | escala solo cuando la pasada determinista no halló nada relevante o coincidió débilmente | gratis hasta que haya proveedor **y** modelo |
-| `always` | cada paso pregunta al router | una llamada por paso |
+| `always` | cada recuperación elegible consulta al modelo de enrutamiento | hasta una llamada por consulta |
 
-`smart` no cuesta nada de fábrica: necesita `routerProvider` y `routerModel`. `routerStrategy` (`task` / `compliance` / `orient`) cambia las instrucciones que recibe el router, así que dos perfiles con los mismos átomos pueden recuperar distinto.
+El modelo de enrutamiento de DSH exige `routerProvider` y `routerModel`. `routerStrategy` (`task` / `compliance` / `orient`) ajusta las instrucciones que recibe.
+
+#### Revisar o afinar una propuesta de memoria
+
+Con un modelo de enrutamiento configurado, el hook `agent/pre-step` puede ofrecer al modelo de ejecución los ID, tipos, grupos y archivos relacionados de los candidatos. El modelo de ejecución puede leer el proyecto actual y decidir qué memoria cargar. Las consultas explícitas con `memory_intent` utilizan el mismo flujo.
+
+1. Consulta con `memory_intent({ task_summary: "Explicar cómo se guardan los ajustes", affected_modules: ["lib/panel.js"] })`.
+2. Envía el `proposal_id` y `accept_memory_ids` a `memory_intent` para cargar solo el texto aprobado. Una lista vacía rechaza toda la propuesta.
+3. Envía el `proposal_id` y `feedback` con evidencia del proyecto para solicitar otra propuesta. La consulta incorpora esa evidencia y excluye los ID ya rechazados. Repite la revisión según sea necesario.
+
+El modelo de enrutamiento puede devolver un resultado vacío. Tanto una abstención como un fallo dejan la consulta sin texto recuperado. Sin un modelo configurado o con el enrutamiento desactivado, se usa la recuperación determinista.
 
 ### «Permanente» no es «peso»
 
@@ -85,12 +95,12 @@ Dieciocho herramientas. Empieza cualquier sesión desconocida con `memory_status
 | `memory_bootstrap` | Todo lo que necesita una sesión nueva, en una llamada con presupuesto. |
 | `memory_search` | ¿Qué documentos hablan de esto? Ordenados, con filtros status/kind/path. |
 | `memory_read` | Lee un documento, o una sección `##`, enmarcado como datos. |
-| `memory_recall` | ¿Qué átomos guardados encajan con esta pregunta? Ordenados, con presupuesto y ruta. |
-| `memory_intent` | Lo mismo, mediante una Task Intent estructurada (tarea, módulos, operación, categorías). |
+| `memory_recall` | Búsqueda determinista de átomos relevantes en los grupos de memoria del proyecto. |
+| `memory_intent` | Consulta memoria por tarea para aprobar, rechazar o afinar la propuesta. |
 | `memory_remember` | Guarda hechos, restricciones y decisiones duraderas. |
 | `memory_forget` | Retira átomos por id; la lápida es pegajosa. |
 | `memory_lifecycle` | Inspecciona y ajusta los niveles de los átomos (HOT / WARM / COLD). |
-| `memory_metrics` | Llamadas al router, latencia, aciertos de caché, entregas frente a usos, coste en tokens. |
+| `memory_metrics` | Llamadas al modelo de enrutamiento, latencia, aciertos de caché, entregas frente a usos, coste en tokens. |
 | `state_get` / `state_update` | Lee el estado; registra un cambio. Compare-and-set, los conflictos se informan. |
 | `state_handoff` | Nota de fin de sesión para que la siguiente empiece orientada. |
 | `project_init` / `project_inspect` | Crea `.dsh-memory/`; diagnóstico de solo lectura. |
@@ -99,7 +109,7 @@ Dieciocho herramientas. Empieza cualquier sesión desconocida con `memory_status
 
 **Comandos:** `/memory-status`, `/memory-context`, `/memory-init`, `/memory-handoff`, `/memory-recall`, `/memory-route`, `/memory-forget`, `/memory-sync`, `/architecture-check`. `/memory-route` es un ensayo: muestra qué ruta tomaría el nivel actual y por qué, sin gastar una llamada al modelo.
 
-**Panel lateral.** Una entrada en la barra lateral abre un panel sobre la pregunta que la gente realmente tiene: *¿la compactación conservó mi memoria?* Muestra la última compactación en una frase, una línea de tiempo de las recientes de más nueva a más antigua (las silenciosas atenuadas, no ocultas), recuentos de activos y olvidados, reglas duras permanentes y el desglose por tipo y peso. Los controles del router están plegados por defecto. No tiene ningún control que modifique la memoria: los átomos los escriben la compactación y herramientas que llevan procedencia, así que la eliminación sigue siendo `memory_forget`. Sus dos rutas (`/project-memory/status`, `/project-memory/config`) son solo de loopback.
+**Panel lateral.** Muestra el resultado de las compactaciones recientes, los recuentos de memoria activa y olvidada, las reglas permanentes y la distribución de la memoria. Los controles del modelo de enrutamiento están plegados por defecto. Puedes retirar memoria con `memory_forget`. Las interfaces del panel solo están disponibles desde la dirección de bucle local.
 
 **Inyección de contexto.** En el primer paso el plugin inyecta una línea base con presupuesto (identidad, hechos de git, tarea, invariantes, próximos pasos, bloqueos, decisiones, mapa de documentos) y la reenvía solo cuando cambia la identidad. Cada paso puede recibir además un bloque de recall, deduplicado contra la superficie visible de la sesión. Ambos llegan como mensajes propiedad del plugin dentro de una valla con nonce: el texto del proyecto es dato, nunca instrucción.
 
@@ -114,7 +124,7 @@ Todos los campos tienen un valor por defecto funcional; los valores inválidos s
 | `l0Budget` / `l1Budget` / `l2Budget` | `300` / `1200` / `2000` | Tokens: línea base mínima, completa, una lectura. |
 | `recallBudget` / `recallLimit` | `400` / `8` | Techo y número para un recall. |
 | `routerTier` / `routerStrategy` | `smart` / `task` | Ver la tabla de niveles. |
-| `routerProvider` / `routerModel` | `''` / `''` | El modelo del router. Vacío significa sin llamadas. |
+| `routerProvider` / `routerModel` | `''` / `''` | Modelo de enrutamiento de DSH. |
 | `routerTimeoutMs` / `routerDigestBudget` | `20000` / `900` | Límite de la llamada; techo de tokens del resumen que se le ofrece. |
 | `extractOnCompaction` / `extractUserRules` | `true` | Extrae átomos de resúmenes y de reglas enunciadas. |
 | `semanticRouting`, `lifecycleEnabled`, `taskIntentEnabled` | `false` | Capas opcionales; un flag de vuelta a `false` restaura el comportamiento anterior. |
@@ -132,13 +142,13 @@ Todo vive bajo `.dsh-memory/`. Commitéalo para memoria compartida del equipo, o
   state/current.json el documento de estado (con recuento de revisión)
   state/journal.jsonl registro de solo anexado de escrituras aceptadas
   state/compactions.jsonl una fila por compactación observada, incluidas las silenciosas
-  memory/atoms.jsonl átomos duraderos, un registro JSON por línea
+  memory/atoms.jsonl un registro JSON por grupo activo o lápida
   memory/metrics.json contadores de eventos acotados
   index.json         caché derivada — seguro de borrar
   settings/<key>.json sobrescrituras por proyecto
 ```
 
-Los ids de los átomos son direccionados por contenido (hash del tipo y el texto normalizado), así que ver la misma afirmación dos veces refuerza un registro. `memory_forget` escribe una lápida en lugar de borrar la línea, así que una extracción posterior no puede resucitarla. Un archivo corrupto se renombra y se informa, no se sustituye en silencio.
+El almacén lee los registros anteriores y los migra a grupos en la siguiente escritura que cambie su contenido. Conserva los ID, la procedencia, las reglas permanentes y las lápidas. Las observaciones repetidas refuerzan el mismo átomo. `memory_forget` escribe una lápida para impedir que se extraiga de nuevo.
 
 ## Qué está medido y qué no
 
@@ -146,13 +156,8 @@ Los ids de los átomos son direccionados por contenido (hash del tipo y el texto
 
 **No medido**:
 
-- **Precisión del router: cero.** El subagente router nunca se ha ejecutado contra un modelo real. Sus pruebas cubren timeout, aborto, respuestas malformadas e ids desconocidos con un delegado simulado; no se ha observado ningún spawn real produciendo una selección real. Su **tasa de disparo** en `smart` tampoco está medida: las reglas de escalado están en `decideRoute`, la frecuencia con que se disparan no tiene cifra.
-- **Coste del escaneo completo.** `gateAtoms` puntúa cada átomo vivo en cada recall (`core/gate.js`). Medido aquí — almacén de 401 registros, esta máquina — un `readAtoms` cuesta ≈ 5.6 ms y un `gateAtoms` ≈ 9.4 ms; sobre átomos sintéticos uniformes la puerta crece
-casi linealmente en ≈ 0.7 / 1.0 / 1.6 / 3.3 ms para 100 / 200 / 400 / 800 átomos. No
-existe índice invertido. La selección de átomos permanentes es una **pasada** aparte, pero reutiliza el mismo escaneo, así que no es un canal de candidatos independiente.
-- **Coste de parseo de `atoms.jsonl`.** Cada recall relee y reparsea el archivo completo (`lib/recall.js`); no hay caché de instantánea en proceso. Cualquier caché necesita invalidación entre procesos (otra sesión, otro proceso o `memory_forget` pueden reescribir el archivo), y por eso es un tema de diseño y no un parche.
-
-La búsqueda es léxica, no semántica. El router degrada a selección determinista al agotarse el tiempo, así que su peor caso es perder una mejora, no romper el paso.
+- **Precisión y frecuencia de las llamadas al modelo de enrutamiento.** Las pruebas usan un delegado simulado para comprobar los tiempos de espera, las cancelaciones, las respuestas no válidas y los ID desconocidos. La precisión de un modelo de enrutamiento de DSH real y la frecuencia de las llamadas en `smart` están pendientes de medición.
+- **Rendimiento de la recuperación por grupos.** Cada consulta analiza `atoms.jsonl` y ordena los átomos de los grupos relacionados. Las mediciones anteriores corresponden al escaneo completo previo a la migración.
 
 ## Lo que no hará
 
@@ -177,10 +182,10 @@ La suite del host cubre los esquemas de herramientas que el harness impone, la i
 
 ```
 core/   Node puro, sin importar DSH — el núcleo comprobable
-        memory.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
+        memory.js  clusters.js  gate.js  state.js  retrieval.js  category.js  lifecycle.js
         extract.js  config.js  index.js  search.js  store.js  paths.js  ...
 lib/    la capa cordis: index.js  tools.js  commands.js  panel.js  recall.js
-        router.js  semantic.js  delegate.js  compaction-memory.js
+        recall-review.js  router.js  semantic.js  delegate.js  compaction-memory.js
 client.js  el panel lateral (mitad Cliente)
 tests/     unit/ (node --test) y comprobaciones *.mjs del host
 docs/      notas de diseño y propuestas de documentos

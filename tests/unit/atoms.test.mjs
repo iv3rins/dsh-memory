@@ -603,12 +603,12 @@ try {
     assert.equal(applied.selected.length, 2, 'the routed selection is projected onto the store')
     assert.deepEqual(
       applied.selected.find((entry) => entry.atom.id === atoms[0].id).reasons,
-      ['standing rule: kept regardless of the router'],
+      ['standing rule: retained by policy'],
       'a standing rule is kept by the standing path, not by the router',
     )
     assert.deepEqual(
       applied.selected.find((entry) => entry.atom.id === atoms[1].id).reasons,
-      ['selected by the router subagent'],
+      ['selected by the routing model'],
       'a non-standing atom is attributed to the router',
     )
 
@@ -806,7 +806,7 @@ try {
     })
     assert.equal(routed.ok, true, 'the router path produces a recall')
     assert.equal(routed.route, 'subagent', 'the route is reported as the subagent')
-    assert.match(routed.block, /router subagent/, 'the block names the router as its source')
+    assert.match(routed.block, /routing model/, 'the block names the routing model as its source')
     assert.match(routed.block, /draft proposals/, 'the atom the deterministic gate would not have chosen is present')
     assert.equal(routed.router.ok, true, 'the router outcome is recorded')
 
@@ -1089,8 +1089,13 @@ try {
   // ------------------------------------------------------------------- config
   {
     assert.deepEqual(config.ROUTER_TIERS, ['always', 'smart', 'off'], 'the three tiers are exactly as specified')
+    assert.deepEqual(config.ROUTER_PROTOCOLS, ['openai-chat-completions', 'openai-responses', 'anthropic-messages'])
     const defaults = config.normalizeConfig({})
     assert.equal(defaults.routerTier, 'smart', 'smart is the default tier')
+    assert.equal(defaults.routerProtocol, 'openai-chat-completions', 'Chat Completions remains the default protocol')
+    assert.equal(config.normalizeConfig({ routerProtocol: 'openai-responses' }).routerProtocol, 'openai-responses')
+    assert.equal(config.normalizeConfig({ routerProtocol: 'anthropic-messages' }).routerProtocol, 'anthropic-messages')
+    assert.equal(config.normalizeConfig({ routerProtocol: 'unsupported' }).routerProtocol, 'openai-chat-completions')
     assert.equal(defaults.recallBudget, 400, 'the recall budget has a documented default')
     assert.equal(defaults.extractOnCompaction, true, 'compaction extraction is on by default')
 
